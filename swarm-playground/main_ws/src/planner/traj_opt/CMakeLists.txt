@@ -36,7 +36,10 @@ include_directories(
 )
 
 add_library( traj_opt 
-    src/poly_traj_optimizer.cpp 
+    src/poly_traj_optimizer.cpp
+    src/tf_sfc/direction_provider.cpp
+    src/tf_sfc/directional_inflator.cpp
+    src/tf_sfc/tf_sfc_manager.cpp
     )
 target_link_libraries( traj_opt
     ${catkin_LIBRARIES} 

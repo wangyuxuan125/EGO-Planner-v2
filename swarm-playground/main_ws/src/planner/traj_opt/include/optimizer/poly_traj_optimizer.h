@@ -6,6 +6,7 @@
 #include <plan_env/grid_map.h>
 #include <ros/ros.h>
 #include "optimizer/lbfgs.hpp"
+#include "optimizer/tf_sfc/tf_sfc_manager.h"
 #include <traj_utils/plan_container.hpp>
 #include "poly_traj_utils.hpp"
 
@@ -70,6 +71,9 @@ namespace ego_planner
     poly_traj::MinJerkOpt jerkOpt_;
     SwarmTrajData *swarm_trajs_{NULL}; // Can not use shared_ptr and no need to free
     ConstraintPoints cps_;
+    tf_sfc::Parameters tf_sfc_parameters_;
+    std::shared_ptr<tf_sfc::TfSfcManager> tf_sfc_manager_;
+    tf_sfc::CorridorVector tf_corridors_;
     // PtsChk_t pts_check_;
 
     int drone_id_;
@@ -127,6 +131,7 @@ namespace ego_planner
     /* helper functions */
     inline const ConstraintPoints &getControlPoints(void) { return cps_; }
     inline const poly_traj::MinJerkOpt &getMinJerkOpt(void) { return jerkOpt_; }
+    inline const tf_sfc::CorridorVector &getTfSfcCorridors(void) const { return tf_corridors_; }
     inline int get_cps_num_prePiece_(void) { return cps_num_prePiece_; }
     inline double get_swarm_clearance_(void) { return swarm_clearance_; }
 

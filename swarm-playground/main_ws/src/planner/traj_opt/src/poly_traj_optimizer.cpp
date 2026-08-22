@@ -32,10 +32,36 @@ namespace ego_planner
     t_now_ = ros::Time::now().toSec();
     piece_num_ = initT.size();
     jerkOpt_.reset(iniState, finState, piece_num_);
+
+    Eigen::MatrixXd guidedInnerPts = initInnerPts;
+    tf_corridors_.clear();
+    if (tf_sfc_parameters_.enabled && tf_sfc_manager_)
+    {
+      // TF-SFC is frozen during one LBFGS solve. Failure leaves the original
+      // EGO initialization, rebound logic, and final collision check untouched.
+      jerkOpt_.generate(guidedInnerPts, initT);
+      if (tf_sfc_manager_->generate(jerkOpt_.getTraj(), tf_corridors_))
+      {
+        if (tf_sfc_parameters_.use_projection)
+        {
+          Eigen::MatrixXd projectedInnerPts = guidedInnerPts;
+          if (tf_sfc_manager_->projectJunctions(projectedInnerPts, tf_corridors_))
+          {
+            guidedInnerPts = projectedInnerPts;
+          }
+        }
+      }
+      else
+      {
+        tf_corridors_.clear();
+        ROS_WARN_THROTTLE(1.0, "TF-SFC generation failed; using the original EGO optimization.");
+      }
+    }
+
     variable_num_ = 4 * (piece_num_ - 1) + 1;
     double x_init[variable_num_];
-    memcpy(x_init, initInnerPts.data(), initInnerPts.size() * sizeof(x_init[0]));
-    Eigen::Map<Eigen::VectorXd> Vt(x_init + initInnerPts.size(), initT.size());
+    memcpy(x_init, guidedInnerPts.data(), guidedInnerPts.size() * sizeof(x_init[0]));
+    Eigen::Map<Eigen::VectorXd> Vt(x_init + guidedInnerPts.size(), initT.size());
     RealT2VirtualT(initT, Vt);
     min_ellip_dist2_.resize(swarm_trajs_->size());
 
@@ -99,6 +125,11 @@ namespace ego_planner
           else
           {
             // A not-blank return value means collision to obstales
+            if (tf_sfc_manager_)
+            {
+              tf_sfc_manager_->clearCorridors();
+              tf_corridors_.clear();
+            }
             flag_still_unsafe = true;
             restart_nums++;
             PRINTF_COND("\033[32miter=%d,time(ms)=%5.3f, fine check collided, keep optimizing\n\033[0m", iter_num_, time_ms);
@@ -114,6 +145,11 @@ namespace ego_planner
       }
       else if (result == lbfgs::LBFGSERR_CANCELED)
       {
+        if (tf_sfc_manager_)
+        {
+          tf_sfc_manager_->clearCorridors();
+          tf_corridors_.clear();
+        }
         flag_force_return = true;
         rebound_times++;
         PRINTF_COND("iter=%d, time(ms)=%f, rebound\n", iter_num_, time_ms);
@@ -1155,7 +1191,7 @@ namespace ego_planner
 
     Eigen::VectorXd gradT(opt->piece_num_);
     double smoo_cost = 0, time_cost = 0;
-    Eigen::VectorXd obs_swarm_feas_qvar_costs(4);
+    Eigen::VectorXd obs_swarm_feas_qvar_costs(5);
 
     opt->VirtualT2RealT(t, T); // Unbounded virtual time to real time
 
@@ -1298,6 +1334,18 @@ namespace ego_planner
           jerkOpt_.get_gdC().block<6, 3>(i * 6, 0) += omg * step * gradViolaPc;
           gdT(i) += omg * (costp / K + step * gradViolaPt);
           costs(0) += omg * step * costp;
+        }
+
+        // Piece-wise frozen TF-SFC penalty. This is intentionally a soft
+        // constraint; the original fine collision check remains authoritative.
+        if (tf_sfc_manager_ && !tf_corridors_.empty() &&
+            tf_sfc_manager_->corridorGradCost(i, pos, gradp, costp))
+        {
+          gradViolaPc = beta0 * gradp.transpose();
+          gradViolaPt = alpha * gradp.transpose() * vel;
+          jerkOpt_.get_gdC().block<6, 3>(i * 6, 0) += omg * step * gradViolaPc;
+          gdT(i) += omg * (costp / K + step * gradViolaPt);
+          costs(4) += omg * step * costp;
         }
 
         // swarm
@@ -1628,6 +1676,44 @@ namespace ego_planner
     nh.param("optimization/max_vel", max_vel_, -1.0);
     nh.param("optimization/max_acc", max_acc_, -1.0);
     nh.param("optimization/max_jer", max_jer_, -1.0);
+
+    nh.param("tf_sfc/enabled", tf_sfc_parameters_.enabled, false);
+    nh.param("tf_sfc/use_projection", tf_sfc_parameters_.use_projection, false);
+    nh.param("tf_sfc/use_soft_penalty", tf_sfc_parameters_.use_soft_penalty, false);
+    nh.param("tf_sfc/max_faces", tf_sfc_parameters_.max_faces, 12);
+    nh.param("tf_sfc/samples_per_piece", tf_sfc_parameters_.samples_per_piece, 8);
+    nh.param("tf_sfc/projection_passes", tf_sfc_parameters_.projection_passes, 4);
+    nh.param("tf_sfc/safety_margin", tf_sfc_parameters_.safety_margin, 0.25);
+    nh.param("tf_sfc/min_overlap_radius", tf_sfc_parameters_.min_overlap_radius, 0.15);
+    nh.param("tf_sfc/max_inflation_distance", tf_sfc_parameters_.max_inflation_distance, 1.0);
+    nh.param("tf_sfc/inflation_step", tf_sfc_parameters_.inflation_step, 0.10);
+    nh.param("tf_sfc/weight", tf_sfc_parameters_.weight, 1000.0);
+    nh.param("tf_sfc/penalty_epsilon", tf_sfc_parameters_.penalty_epsilon, 0.02);
+
+    int direction_mode = static_cast<int>(tf_sfc::DirectionMode::PCA);
+    nh.param("tf_sfc/direction_mode", direction_mode,
+             static_cast<int>(tf_sfc::DirectionMode::PCA));
+    if (direction_mode < static_cast<int>(tf_sfc::DirectionMode::FRENET) ||
+        direction_mode > static_cast<int>(tf_sfc::DirectionMode::SENSITIVITY))
+    {
+      ROS_WARN("Invalid tf_sfc/direction_mode=%d; using PCA (1).", direction_mode);
+      direction_mode = static_cast<int>(tf_sfc::DirectionMode::PCA);
+    }
+    tf_sfc_parameters_.direction_mode = static_cast<tf_sfc::DirectionMode>(direction_mode);
+
+    if (tf_sfc_parameters_.max_faces < 6)
+    {
+      ROS_WARN("tf_sfc/max_faces must be at least 6; disabling TF-SFC.");
+      tf_sfc_parameters_.enabled = false;
+    }
+    tf_sfc_parameters_.samples_per_piece = std::max(tf_sfc_parameters_.samples_per_piece, 2);
+    tf_sfc_parameters_.projection_passes = std::max(tf_sfc_parameters_.projection_passes, 1);
+    tf_sfc_parameters_.safety_margin = std::max(tf_sfc_parameters_.safety_margin, 0.0);
+    tf_sfc_parameters_.min_overlap_radius = std::max(tf_sfc_parameters_.min_overlap_radius, 0.0);
+    tf_sfc_parameters_.max_inflation_distance = std::max(tf_sfc_parameters_.max_inflation_distance, 0.0);
+    tf_sfc_parameters_.inflation_step = std::max(tf_sfc_parameters_.inflation_step, 1.0e-3);
+    tf_sfc_parameters_.weight = std::max(tf_sfc_parameters_.weight, 0.0);
+    tf_sfc_parameters_.penalty_epsilon = std::max(tf_sfc_parameters_.penalty_epsilon, 0.0);
   }
 
   void PolyTrajOptimizer::setEnvironment(const GridMap::Ptr &map)
@@ -1636,6 +1722,15 @@ namespace ego_planner
 
     a_star_.reset(new AStar);
     a_star_->initGridMap(grid_map_, Eigen::Vector3i(100, 100, 100));
+
+    if (tf_sfc_parameters_.enabled)
+    {
+      tf_sfc_manager_.reset(new tf_sfc::TfSfcManager(grid_map_, tf_sfc_parameters_));
+    }
+    else
+    {
+      tf_sfc_manager_.reset();
+    }
   }
 
   void PolyTrajOptimizer::setControlPoints(const Eigen::MatrixXd &points)

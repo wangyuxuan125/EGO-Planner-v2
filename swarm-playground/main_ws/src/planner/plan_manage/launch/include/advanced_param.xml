@@ -134,5 +134,20 @@
         <param name="optimization/max_acc" value="$(arg max_acc)" type="double"/>
         <param name="optimization/max_jer" value="$(arg max_jer)" type="double"/>
         <param name="optimization/record_opt" value="true"/>
+
+        <!-- TF-SFC MVP: disabled by default; 0=Frenet, 1=PCA, 2=sensitivity Gramian. -->
+        <param name="tf_sfc/enabled" value="false" type="bool"/>
+        <param name="tf_sfc/use_projection" value="false" type="bool"/>
+        <param name="tf_sfc/use_soft_penalty" value="false" type="bool"/>
+        <param name="tf_sfc/direction_mode" value="1" type="int"/>
+        <param name="tf_sfc/max_faces" value="12" type="int"/>
+        <param name="tf_sfc/samples_per_piece" value="8" type="int"/>
+        <param name="tf_sfc/projection_passes" value="4" type="int"/>
+        <param name="tf_sfc/safety_margin" value="0.25" type="double"/>
+        <param name="tf_sfc/min_overlap_radius" value="0.15" type="double"/>
+        <param name="tf_sfc/max_inflation_distance" value="1.0" type="double"/>
+        <param name="tf_sfc/inflation_step" value="0.10" type="double"/>
+        <param name="tf_sfc/weight" value="1000.0" type="double"/>
+        <param name="tf_sfc/penalty_epsilon" value="0.02" type="double"/>
     </node>
 </launch>

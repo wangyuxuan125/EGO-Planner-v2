@@ -144,6 +144,7 @@ public:
   void initMap(ros::NodeHandle &nh);
   inline int getOccupancy(Eigen::Vector3d pos);
   inline int getInflateOccupancy(Eigen::Vector3d pos);
+  inline bool isInInflatedMap(const Eigen::Vector3d &pos);
   inline double getResolution();
   bool getOdomDepthTimeout() { return md_.flag_depth_odom_timeout_; }
 
@@ -409,6 +410,11 @@ inline int GridMap::getInflateOccupancy(Eigen::Vector3d pos)
     return -1;
 
   return int(md_.occupancy_buffer_inflate_[globalIdx2InfBufIdx(pos2GlobalIdx(pos))]);
+}
+
+inline bool GridMap::isInInflatedMap(const Eigen::Vector3d &pos)
+{
+  return isInInfBuf(pos);
 }
 
 inline bool GridMap::isInBuf(const Eigen::Vector3d &pos)
