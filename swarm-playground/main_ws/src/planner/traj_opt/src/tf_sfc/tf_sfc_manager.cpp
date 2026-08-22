@@ -27,9 +27,19 @@ bool TfSfcManager::generate(const poly_traj::Trajectory &trajectory,
     return false;
   }
 
-  corridors.reserve(trajectory.getPieceNum());
+  corridors.resize(trajectory.getPieceNum());
+  int valid_count = 0;
+  bool prefix_active = true;
   for (int piece_id = 0; piece_id < trajectory.getPieceNum(); ++piece_id)
   {
+    Corridor &corridor = corridors[piece_id];
+    corridor.metrics.piece_id = piece_id;
+    if (!prefix_active)
+    {
+      corridor.metrics.failure_reason = FailureReason::SKIPPED_AFTER_FAILURE;
+      continue;
+    }
+
     const auto started = std::chrono::steady_clock::now();
     const poly_traj::Piece &piece = trajectory[piece_id];
     const PointVector samples = samplePiece(piece);
@@ -37,44 +47,55 @@ bool TfSfcManager::generate(const poly_traj::Trajectory &trajectory,
     directions.requested_mode = parameters_.direction_mode;
     if (!computeDirections(piece, samples, piece_id, directions))
     {
-      corridors.clear();
-      return false;
+      corridor.metrics.failure_reason = FailureReason::DIRECTION_FAILURE;
+      prefix_active = false;
+      continue;
     }
 
-    Corridor corridor;
-    corridor.metrics.piece_id = piece_id;
+    FailureReason failure_reason = FailureReason::NONE;
     const bool inflated = inflator_.inflate(
         samples, directions, grid_map_->getResolution(),
         [this](const Eigen::Vector3d &point) {
-          return !grid_map_->isInInflatedMap(point) ||
-                 grid_map_->getInflateOccupancy(point) != 0;
+          if (!grid_map_->isInInflatedMap(point))
+          {
+            return DirectionalInflator::SpaceState::OUTSIDE_MAP;
+          }
+          return grid_map_->getInflateOccupancy(point) != 0
+                     ? DirectionalInflator::SpaceState::OCCUPIED
+                     : DirectionalInflator::SpaceState::FREE;
         },
-        corridor);
+        corridor, failure_reason);
     const auto finished = std::chrono::steady_clock::now();
     corridor.metrics.generation_time_ms =
         std::chrono::duration<double, std::milli>(finished - started).count();
     if (!inflated)
     {
-      corridors.clear();
-      return false;
+      corridor.metrics.failure_reason = failure_reason;
+      prefix_active = false;
+      continue;
     }
-    corridors.push_back(corridor);
-  }
+    corridor.metrics.failure_reason = FailureReason::NONE;
 
-  for (int i = 0; i + 1 < static_cast<int>(corridors.size()); ++i)
-  {
-    const Eigen::Vector3d junction = trajectory.getJuncPos(i + 1);
-    const double radius = overlapRadius(corridors[i], corridors[i + 1], junction);
-    corridors[i].metrics.overlap_radius_to_next = radius;
-    if (radius + 1.0e-9 < parameters_.min_overlap_radius)
+    if (piece_id > 0 && corridors[piece_id - 1].metrics.valid)
     {
-      corridors.clear();
-      return false;
+      const Eigen::Vector3d junction = trajectory.getJuncPos(piece_id);
+      const double radius = overlapRadius(corridors[piece_id - 1], corridor, junction);
+      corridors[piece_id - 1].metrics.overlap_radius_to_next = radius;
+      if (radius + 1.0e-9 < parameters_.min_overlap_radius)
+      {
+        corridor.metrics.valid = false;
+        corridor.metrics.failure_reason = FailureReason::OVERLAP_TOO_SMALL;
+        prefix_active = false;
+        continue;
+      }
     }
+    ++valid_count;
   }
 
   corridors_ = corridors;
-  return true;
+  const bool enough_valid = valid_count >= std::max(parameters_.min_valid_pieces, 1);
+  return enough_valid &&
+         (parameters_.allow_partial_corridors || valid_count == trajectory.getPieceNum());
 }
 
 void TfSfcManager::clearCorridors()
@@ -94,6 +115,11 @@ bool TfSfcManager::projectJunctions(Eigen::MatrixXd &inner_points,
   Eigen::MatrixXd projected = inner_points;
   for (int junction_id = 0; junction_id < projected.cols(); ++junction_id)
   {
+    if (!corridors[junction_id].metrics.valid ||
+        !corridors[junction_id + 1].metrics.valid)
+    {
+      continue;
+    }
     Eigen::Vector3d point = projected.col(junction_id);
     for (int pass = 0; pass < parameters_.projection_passes; ++pass)
     {
@@ -132,7 +158,8 @@ bool TfSfcManager::corridorGradCost(const int piece_id,
   gradient.setZero();
   cost = 0.0;
   if (!parameters_.use_soft_penalty || piece_id < 0 ||
-      piece_id >= static_cast<int>(corridors_.size()))
+      piece_id >= static_cast<int>(corridors_.size()) ||
+      !corridors_[piece_id].metrics.valid)
   {
     return false;
   }

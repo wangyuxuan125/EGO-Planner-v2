@@ -45,16 +45,16 @@ namespace ego_planner
     tf_corridors_.clear();
     if (tf_sfc_parameters_.enabled && tf_sfc_manager_)
     {
-      // TF-SFC is frozen during one LBFGS solve. Failure leaves the original
-      // EGO initialization, rebound logic, and final collision check untouched.
+      // TF-SFC is frozen during one optimization request. The explicit fallback
+      // switch controls both generation failures and later EGO rebound retries.
       jerkOpt_.generate(guidedInnerPts, initT);
       const ros::WallTime corridor_started = ros::WallTime::now();
       const bool corridor_ok = tf_sfc_manager_->generate(jerkOpt_.getTraj(), tf_corridors_);
       tf_sfc_generation_ms = (ros::WallTime::now() - corridor_started).toSec() * 1000.0;
+      logged_corridors = tf_corridors_;
       if (corridor_ok)
       {
         tf_sfc_generated = true;
-        logged_corridors = tf_corridors_;
         if (tf_sfc_parameters_.use_projection)
         {
           Eigen::MatrixXd projectedInnerPts = guidedInnerPts;
@@ -67,6 +67,49 @@ namespace ego_planner
       }
       else
       {
+        if (!tf_sfc_parameters_.allow_ego_fallback)
+        {
+          tf_sfc::ExperimentRunRecord record;
+          record.run_id = tf_sfc_experiment_logger_
+                              ? tf_sfc_experiment_logger_->makeRunId(drone_id_)
+                              : "";
+          record.experiment_tag = tf_sfc_experiment_logger_
+                                      ? tf_sfc_experiment_logger_->experimentTag()
+                                      : tf_sfc_parameters_.experiment_tag;
+          record.status = "tf_sfc_generation_failure";
+          record.timestamp_s = t0.toSec();
+          record.drone_id = drone_id_;
+          record.tf_sfc_enabled = true;
+          record.direction_mode = static_cast<int>(tf_sfc_parameters_.direction_mode);
+          record.total_planning_ms = (ros::Time::now() - t0).toSec() * 1000.0;
+          record.corridor_generation_ms = tf_sfc_generation_ms;
+          record.piece_count = piece_num_;
+          record.final_cost = std::numeric_limits<double>::quiet_NaN();
+          record.trajectory_duration_s = jerkOpt_.getTraj().getTotalDuration();
+          for (const tf_sfc::Corridor &corridor : logged_corridors)
+          {
+            if (corridor.metrics.valid)
+            {
+              ++record.corridor_count;
+            }
+            else
+            {
+              ++record.failed_piece_count;
+              if (record.first_failure_reason == "none")
+              {
+                record.first_failure_reason =
+                    tf_sfc::failureReasonName(corridor.metrics.failure_reason);
+              }
+            }
+          }
+          if (tf_sfc_experiment_logger_ && tf_sfc_experiment_logger_->enabled())
+          {
+            tf_sfc_experiment_logger_->log(record, logged_corridors);
+          }
+          ROS_ERROR_THROTTLE(1.0,
+                             "TF-SFC generation failed and fallback is disabled; rejecting this plan.");
+          return false;
+        }
         fallback_to_ego = true;
         tf_corridors_.clear();
         ROS_WARN_THROTTLE(1.0, "TF-SFC generation failed; using the original EGO optimization.");
@@ -143,7 +186,8 @@ namespace ego_planner
           else
           {
             // A not-blank return value means collision to obstales
-            if (tf_sfc_manager_)
+            if (tf_sfc_manager_ &&
+                (!tf_sfc_generated || tf_sfc_parameters_.allow_ego_fallback))
             {
               tf_sfc_manager_->clearCorridors();
               tf_corridors_.clear();
@@ -164,7 +208,8 @@ namespace ego_planner
       }
       else if (result == lbfgs::LBFGSERR_CANCELED)
       {
-        if (tf_sfc_manager_)
+        if (tf_sfc_manager_ &&
+            (!tf_sfc_generated || tf_sfc_parameters_.allow_ego_fallback))
         {
           tf_sfc_manager_->clearCorridors();
           tf_corridors_.clear();
@@ -208,7 +253,6 @@ namespace ego_planner
       record.restart_count = restart_nums;
       record.rebound_count = rebound_times;
       record.piece_count = piece_num_;
-      record.corridor_count = static_cast<int>(logged_corridors.size());
       record.final_cost = final_cost;
       const poly_traj::Trajectory &result_trajectory = jerkOpt_.getTraj();
       record.trajectory_duration_s = result_trajectory.getPieceNum() > 0
@@ -245,6 +289,16 @@ namespace ego_planner
         for (const tf_sfc::Corridor &corridor : logged_corridors)
         {
           const tf_sfc::CorridorMetrics &metrics = corridor.metrics;
+          if (!metrics.valid)
+          {
+            ++record.failed_piece_count;
+            if (record.first_failure_reason == "none")
+            {
+              record.first_failure_reason = tf_sfc::failureReasonName(metrics.failure_reason);
+            }
+            continue;
+          }
+          ++record.corridor_count;
           record.total_faces += metrics.face_count;
           total_weighted_width += metrics.weighted_width;
           min_sample_slack = std::min(min_sample_slack, metrics.min_sample_slack);
@@ -256,11 +310,14 @@ namespace ego_planner
             ++overlap_count;
           }
         }
-        record.mean_faces = static_cast<double>(record.total_faces) /
-                            static_cast<double>(logged_corridors.size());
-        record.mean_weighted_width = total_weighted_width /
-                                     static_cast<double>(logged_corridors.size());
-        record.min_sample_slack = min_sample_slack;
+        if (record.corridor_count > 0)
+        {
+          record.mean_faces = static_cast<double>(record.total_faces) /
+                              static_cast<double>(record.corridor_count);
+          record.mean_weighted_width = total_weighted_width /
+                                       static_cast<double>(record.corridor_count);
+          record.min_sample_slack = min_sample_slack;
+        }
         if (overlap_count > 0)
         {
           record.min_overlap_radius = min_overlap_radius;
@@ -1786,6 +1843,8 @@ namespace ego_planner
     nh.param("tf_sfc/enabled", tf_sfc_parameters_.enabled, false);
     nh.param("tf_sfc/use_projection", tf_sfc_parameters_.use_projection, false);
     nh.param("tf_sfc/use_soft_penalty", tf_sfc_parameters_.use_soft_penalty, false);
+    nh.param("tf_sfc/allow_partial_corridors", tf_sfc_parameters_.allow_partial_corridors, true);
+    nh.param("tf_sfc/allow_ego_fallback", tf_sfc_parameters_.allow_ego_fallback, true);
     nh.param("tf_sfc/log_enabled", tf_sfc_parameters_.log_enabled, true);
     nh.param<std::string>("tf_sfc/log_directory", tf_sfc_parameters_.log_directory,
                           "/tmp/tf_sfc_results/ego");
@@ -1794,6 +1853,7 @@ namespace ego_planner
     nh.param("tf_sfc/max_faces", tf_sfc_parameters_.max_faces, 12);
     nh.param("tf_sfc/samples_per_piece", tf_sfc_parameters_.samples_per_piece, 8);
     nh.param("tf_sfc/projection_passes", tf_sfc_parameters_.projection_passes, 4);
+    nh.param("tf_sfc/min_valid_pieces", tf_sfc_parameters_.min_valid_pieces, 1);
     nh.param("tf_sfc/safety_margin", tf_sfc_parameters_.safety_margin, 0.25);
     nh.param("tf_sfc/min_overlap_radius", tf_sfc_parameters_.min_overlap_radius, 0.15);
     nh.param("tf_sfc/max_inflation_distance", tf_sfc_parameters_.max_inflation_distance, 1.0);
@@ -1819,6 +1879,7 @@ namespace ego_planner
     }
     tf_sfc_parameters_.samples_per_piece = std::max(tf_sfc_parameters_.samples_per_piece, 2);
     tf_sfc_parameters_.projection_passes = std::max(tf_sfc_parameters_.projection_passes, 1);
+    tf_sfc_parameters_.min_valid_pieces = std::max(tf_sfc_parameters_.min_valid_pieces, 1);
     tf_sfc_parameters_.safety_margin = std::max(tf_sfc_parameters_.safety_margin, 0.0);
     tf_sfc_parameters_.min_overlap_radius = std::max(tf_sfc_parameters_.min_overlap_radius, 0.0);
     tf_sfc_parameters_.max_inflation_distance = std::max(tf_sfc_parameters_.max_inflation_distance, 0.0);

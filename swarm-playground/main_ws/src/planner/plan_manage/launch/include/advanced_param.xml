@@ -36,6 +36,11 @@
     <arg name="tf_sfc_enabled" default="false"/>
     <arg name="tf_sfc_use_projection" default="false"/>
     <arg name="tf_sfc_use_soft_penalty" default="false"/>
+    <arg name="tf_sfc_allow_partial_corridors" default="true"/>
+    <arg name="tf_sfc_allow_ego_fallback" default="true"/>
+    <arg name="tf_sfc_min_valid_pieces" default="1"/>
+    <arg name="tf_sfc_safety_margin" default="0.10"/>
+    <arg name="tf_sfc_min_overlap_radius" default="0.08"/>
     <arg name="tf_sfc_direction_mode" default="1"/>
     <arg name="tf_sfc_log_enabled" default="true"/>
     <arg name="tf_sfc_log_directory" default="$(env HOME)/tf_sfc_results/ego"/>
@@ -146,6 +151,9 @@
         <param name="tf_sfc/enabled" value="$(arg tf_sfc_enabled)" type="bool"/>
         <param name="tf_sfc/use_projection" value="$(arg tf_sfc_use_projection)" type="bool"/>
         <param name="tf_sfc/use_soft_penalty" value="$(arg tf_sfc_use_soft_penalty)" type="bool"/>
+        <param name="tf_sfc/allow_partial_corridors" value="$(arg tf_sfc_allow_partial_corridors)" type="bool"/>
+        <param name="tf_sfc/allow_ego_fallback" value="$(arg tf_sfc_allow_ego_fallback)" type="bool"/>
+        <param name="tf_sfc/min_valid_pieces" value="$(arg tf_sfc_min_valid_pieces)" type="int"/>
         <param name="tf_sfc/direction_mode" value="$(arg tf_sfc_direction_mode)" type="int"/>
         <param name="tf_sfc/log_enabled" value="$(arg tf_sfc_log_enabled)" type="bool"/>
         <param name="tf_sfc/log_directory" value="$(arg tf_sfc_log_directory)" type="string"/>
@@ -153,8 +161,8 @@
         <param name="tf_sfc/max_faces" value="12" type="int"/>
         <param name="tf_sfc/samples_per_piece" value="8" type="int"/>
         <param name="tf_sfc/projection_passes" value="4" type="int"/>
-        <param name="tf_sfc/safety_margin" value="0.25" type="double"/>
-        <param name="tf_sfc/min_overlap_radius" value="0.15" type="double"/>
+        <param name="tf_sfc/safety_margin" value="$(arg tf_sfc_safety_margin)" type="double"/>
+        <param name="tf_sfc/min_overlap_radius" value="$(arg tf_sfc_min_overlap_radius)" type="double"/>
         <param name="tf_sfc/max_inflation_distance" value="1.0" type="double"/>
         <param name="tf_sfc/inflation_step" value="0.10" type="double"/>
         <param name="tf_sfc/weight" value="1000.0" type="double"/>

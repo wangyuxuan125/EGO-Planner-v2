@@ -34,6 +34,8 @@ struct ExperimentRunRecord
   int rebound_count = 0;
   int piece_count = 0;
   int corridor_count = 0;
+  int failed_piece_count = 0;
+  std::string first_failure_reason = "none";
   int total_faces = 0;
   double mean_faces = 0.0;
   double mean_weighted_width = 0.0;

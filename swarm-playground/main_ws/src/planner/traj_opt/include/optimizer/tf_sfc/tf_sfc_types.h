@@ -21,11 +21,39 @@ enum class DirectionMode
   SENSITIVITY = 2
 };
 
+enum class FailureReason
+{
+  NONE = 0,
+  INVALID_INPUT = 1,
+  DIRECTION_FAILURE = 2,
+  OUTSIDE_LOCAL_MAP = 3,
+  INITIAL_OBB_OCCUPIED = 4,
+  OVERLAP_TOO_SMALL = 5,
+  SKIPPED_AFTER_FAILURE = 6
+};
+
+inline const char *failureReasonName(const FailureReason reason)
+{
+  switch (reason)
+  {
+  case FailureReason::NONE: return "none";
+  case FailureReason::INVALID_INPUT: return "invalid_input";
+  case FailureReason::DIRECTION_FAILURE: return "direction_failure";
+  case FailureReason::OUTSIDE_LOCAL_MAP: return "outside_local_map";
+  case FailureReason::INITIAL_OBB_OCCUPIED: return "initial_obb_occupied";
+  case FailureReason::OVERLAP_TOO_SMALL: return "overlap_too_small";
+  case FailureReason::SKIPPED_AFTER_FAILURE: return "skipped_after_failure";
+  }
+  return "unknown";
+}
+
 struct Parameters
 {
   bool enabled = false;
   bool use_projection = false;
   bool use_soft_penalty = false;
+  bool allow_partial_corridors = true;
+  bool allow_ego_fallback = true;
   bool log_enabled = true;
   std::string log_directory = "/tmp/tf_sfc_results/ego";
   std::string experiment_tag = "default";
@@ -33,6 +61,7 @@ struct Parameters
   int max_faces = 12;
   int samples_per_piece = 8;
   int projection_passes = 4;
+  int min_valid_pieces = 1;
   double safety_margin = 0.25;
   double min_overlap_radius = 0.15;
   double max_inflation_distance = 1.0;
@@ -62,6 +91,7 @@ struct CorridorMetrics
   double overlap_radius_to_next = -1.0;
   bool valid = false;
   bool direction_fallback = false;
+  FailureReason failure_reason = FailureReason::NONE;
 };
 
 // Each row of hpoly stores [n_x, n_y, n_z, b] for n.dot(x) <= b.

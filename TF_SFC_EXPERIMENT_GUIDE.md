@@ -1,6 +1,6 @@
 # TF-SFC 实验编译、运行与数据记录指南
 
-本文档对应 `feat/tf-sfc-mvp` 分支。当前 TF-SFC 是保守的六面 OBB MVP；默认关闭，生成或认证失败时会回退到 EGO 原始优化流程。
+本文档对应 `feat/tf-sfc-mvp` 分支。当前 TF-SFC 是保守的六面 OBB MVP；功能默认关闭。启用后，单机实验启动文件默认采用严格模式，生成或认证失败会记为失败而不会伪装成 EGO 成功；工程运行仍可显式开启回退。
 
 ## 1. 环境与编译
 
@@ -29,6 +29,7 @@ source devel/setup.bash
 
 ```bash
 roslaunch ego_planner single_drone_interactive.launch \
+  map_seed:=42 \
   tf_sfc_enabled:=false \
   tf_sfc_experiment_tag:=ego_original
 ```
@@ -37,8 +38,14 @@ roslaunch ego_planner single_drone_interactive.launch \
 
 ```bash
 roslaunch ego_planner single_drone_interactive.launch \
+  map_seed:=42 \
   tf_sfc_enabled:=true \
   tf_sfc_direction_mode:=1 \
+  tf_sfc_allow_partial_corridors:=true \
+  tf_sfc_allow_ego_fallback:=false \
+  tf_sfc_min_valid_pieces:=1 \
+  tf_sfc_safety_margin:=0.10 \
+  tf_sfc_min_overlap_radius:=0.08 \
   tf_sfc_use_projection:=false \
   tf_sfc_use_soft_penalty:=true \
   tf_sfc_experiment_tag:=pca_obb_soft
@@ -48,14 +55,19 @@ roslaunch ego_planner single_drone_interactive.launch \
 
 ```bash
 roslaunch ego_planner single_drone_interactive.launch \
+  map_seed:=42 \
   tf_sfc_enabled:=true \
   tf_sfc_direction_mode:=0 \
+  tf_sfc_allow_partial_corridors:=true \
+  tf_sfc_allow_ego_fallback:=false \
   tf_sfc_use_projection:=false \
   tf_sfc_use_soft_penalty:=true \
   tf_sfc_experiment_tag:=frenet_obb_soft
 ```
 
 方向模式为 `0=Frenet`、`1=PCA`、`2=Sensitivity Gramian`。当前 MVP 尚未从 MINCO 自动构造 Gramian；模式 2 没有外部有效 Gramian 时会回退到 PCA，并在 CSV 中记录 `direction_fallback_count`。因此当前不能把模式 2 的回退结果作为完整灵敏度方法结果。
+
+`single_drone_interactive.launch` 对 EGO 回退默认采用严格模式（`tf_sfc_allow_ego_fallback=false`）；只有明确进行工程可用性测试时才建议手动开启回退。
 
 ### 自定义日志目录
 
@@ -75,20 +87,20 @@ roslaunch ego_planner single_drone_interactive.launch \
 默认输出：
 
 ```text
-$HOME/tf_sfc_results/ego/ego_runs_drone_0.csv
-$HOME/tf_sfc_results/ego/ego_corridors_drone_0.csv
+$HOME/tf_sfc_results/ego/ego_runs_v2_drone_0.csv
+$HOME/tf_sfc_results/ego/ego_corridors_v2_drone_0.csv
 ```
 
-- `ego_runs_drone_<id>.csv`：每次优化调用一行，包含实验标签、状态、成功/无碰撞标志、规划与优化耗时、LBFGS 迭代、重启/反弹次数、走廊统计、最终代价、轨迹时长和采样近似轨迹长度。
-- `ego_corridors_drone_<id>.csv`：每个成功生成的分段走廊一行，包含面数、生成时间、加权方向宽度、样本余量、相邻重叠半径和方向回退标志。
+- `ego_runs_v2_drone_<id>.csv`：每次优化调用一行，包含实验标签、状态、成功/无碰撞标志、规划与优化耗时、LBFGS 迭代、有效/失败分段数、首个失败原因、最终代价、轨迹时长和采样近似轨迹长度。
+- `ego_corridors_v2_drone_<id>.csv`：每个轨迹分段一行；有效段记录面数、生成时间、加权方向宽度、样本余量和相邻重叠半径，无效段记录 `outside_local_map`、`initial_obb_occupied`、`overlap_too_small` 等原因。
 
 文件使用追加模式。不要在同一标签下混入不同地图或参数；建议每个场景使用独立目录或唯一 `tf_sfc_experiment_tag`。
 
 快速查看：
 
 ```bash
-head -n 5 $HOME/tf_sfc_results/ego/ego_runs_drone_0.csv
-head -n 5 $HOME/tf_sfc_results/ego/ego_corridors_drone_0.csv
+head -n 5 $HOME/tf_sfc_results/ego/ego_runs_v2_drone_0.csv
+head -n 5 $HOME/tf_sfc_results/ego/ego_corridors_v2_drone_0.csv
 ```
 
 ## 4. 当前可用于论文统计的字段
@@ -102,7 +114,7 @@ head -n 5 $HOME/tf_sfc_results/ego/ego_corridors_drone_0.csv
 下面的命令只使用 Python 标准库：
 
 ```bash
-python3 - $HOME/tf_sfc_results/ego/ego_runs_drone_0.csv <<'PY'
+python3 - $HOME/tf_sfc_results/ego/ego_runs_v2_drone_0.csv <<'PY'
 import csv, math, statistics, sys
 
 rows = list(csv.DictReader(open(sys.argv[1], newline='')))
@@ -126,4 +138,5 @@ PY
 2. 先做若干次预热运行，再开始记录正式试验。
 3. 每种方法、每个场景使用相同 seed 和起终点，建议至少重复 30 次。
 4. 保留原始 CSV，只在副本上清洗或聚合数据。
-5. `fallback_to_ego=1` 的样本必须单独统计，不能直接算作完整 TF-SFC 成功样本。
+5. 正式 TF-SFC 实验使用 `tf_sfc_allow_ego_fallback:=false`；`fallback_to_ego=1` 的工程运行样本不能算作 TF-SFC 成功样本。
+6. `allow_partial_corridors=true` 表示只约束从当前状态开始、位于已知局部地图内的连续有效前缀；末端未知空间不会导致前面已认证走廊全部丢失。

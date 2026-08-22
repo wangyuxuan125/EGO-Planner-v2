@@ -19,10 +19,13 @@ bool DirectionalInflator::inflate(const PointVector &samples,
                                   const DirectionSet &directions,
                                   const double map_resolution,
                                   const OccupancyQuery &is_occupied,
-                                  Corridor &corridor) const
+                                  Corridor &corridor,
+                                  FailureReason &failure_reason) const
 {
+  failure_reason = FailureReason::NONE;
   if (samples.empty() || map_resolution <= 0.0 || !is_occupied || parameters_.max_faces < 6)
   {
+    failure_reason = FailureReason::INVALID_INPUT;
     return false;
   }
 
@@ -44,8 +47,13 @@ bool DirectionalInflator::inflate(const PointVector &samples,
   lower.array() -= parameters_.safety_margin;
   upper.array() += parameters_.safety_margin;
 
-  if (!candidateIsFree(anchor, directions.frame, lower, upper, map_resolution, is_occupied))
+  const SpaceState initial_state = candidateState(
+      anchor, directions.frame, lower, upper, map_resolution, is_occupied);
+  if (initial_state != SpaceState::FREE)
   {
+    failure_reason = initial_state == SpaceState::OUTSIDE_MAP
+                         ? FailureReason::OUTSIDE_LOCAL_MAP
+                         : FailureReason::INITIAL_OBB_OCCUPIED;
     return false;
   }
 
@@ -73,8 +81,8 @@ bool DirectionalInflator::inflate(const PointVector &samples,
           candidate_upper(axis) += step;
         }
 
-        if (!candidateIsFree(anchor, directions.frame, candidate_lower, candidate_upper,
-                             map_resolution, is_occupied))
+        if (candidateState(anchor, directions.frame, candidate_lower, candidate_upper,
+                           map_resolution, is_occupied) != SpaceState::FREE)
         {
           break;
         }
@@ -140,12 +148,13 @@ double DirectionalInflator::pointSlack(const HPoly &hpoly,
   return min_slack;
 }
 
-bool DirectionalInflator::candidateIsFree(const Eigen::Vector3d &anchor,
-                                          const Eigen::Matrix3d &frame,
-                                          const Eigen::Vector3d &lower,
-                                          const Eigen::Vector3d &upper,
-                                          const double map_resolution,
-                                          const OccupancyQuery &is_occupied) const
+DirectionalInflator::SpaceState DirectionalInflator::candidateState(
+    const Eigen::Vector3d &anchor,
+    const Eigen::Matrix3d &frame,
+    const Eigen::Vector3d &lower,
+    const Eigen::Vector3d &upper,
+    const double map_resolution,
+    const OccupancyQuery &is_occupied) const
 {
   Eigen::Vector3d aabb_min = Eigen::Vector3d::Constant(std::numeric_limits<double>::infinity());
   Eigen::Vector3d aabb_max = Eigen::Vector3d::Constant(-std::numeric_limits<double>::infinity());
@@ -167,6 +176,7 @@ bool DirectionalInflator::candidateIsFree(const Eigen::Vector3d &anchor,
   const Eigen::Vector3i begin = (aabb_min / map_resolution).array().floor().cast<int>();
   const Eigen::Vector3i end = (aabb_max / map_resolution).array().ceil().cast<int>();
   constexpr double kInsideTolerance = 1.0e-9;
+  bool touched_outside = false;
   for (int x = begin.x(); x <= end.x(); ++x)
   {
     for (int y = begin.y(); y <= end.y(); ++y)
@@ -177,15 +187,19 @@ bool DirectionalInflator::candidateIsFree(const Eigen::Vector3d &anchor,
             (Eigen::Vector3d(x, y, z).array() + 0.5).matrix() * map_resolution;
         const Eigen::Vector3d local = frame.transpose() * (world - anchor);
         if ((local.array() >= lower.array() - voxel_padding - kInsideTolerance).all() &&
-            (local.array() <= upper.array() + voxel_padding + kInsideTolerance).all() &&
-            is_occupied(world))
+            (local.array() <= upper.array() + voxel_padding + kInsideTolerance).all())
         {
-          return false;
+          const SpaceState state = is_occupied(world);
+          if (state == SpaceState::OCCUPIED)
+          {
+            return SpaceState::OCCUPIED;
+          }
+          touched_outside = touched_outside || state == SpaceState::OUTSIDE_MAP;
         }
       }
     }
   }
-  return true;
+  return touched_outside ? SpaceState::OUTSIDE_MAP : SpaceState::FREE;
 }
 
 HPoly DirectionalInflator::boundsToHPoly(const Eigen::Vector3d &anchor,

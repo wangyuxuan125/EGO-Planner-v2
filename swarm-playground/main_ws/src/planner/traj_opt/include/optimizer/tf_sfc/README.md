@@ -17,8 +17,12 @@ EGO-Planner-v2's original rebound, restart, swarm, and final collision-check pat
   overlap radius, and direction-fallback metrics.
 - Optional junction projection and a frozen, piece-wise soft corridor penalty in
   the existing MINCO/L-BFGS integration loop.
-- Automatic fallback to the original EGO optimizer if any corridor or overlap
-  certificate fails.
+- A certified-prefix policy: a piece outside the current local map no longer
+  discards preceding valid corridors. Invalid and skipped pieces carry explicit
+  failure reasons and receive no corridor penalty.
+- Configurable EGO fallback. Operational launches may allow fallback; strict
+  experiments can reject generation failures instead of silently counting an
+  original-EGO result as TF-SFC success.
 
 This is an integration and OBB-baseline milestone, not the paper's full TF-SFC
 method. In particular, obstacle cutting planes, face pruning, overlap refinement,
@@ -35,6 +39,9 @@ The launch files expose the following private ROS parameters:
 | `tf_sfc/direction_mode` | `0`: Frenet, `1`: PCA, `2`: sensitivity Gramian. |
 | `tf_sfc/use_projection` | Project inner junctions into adjacent-corridor intersections. |
 | `tf_sfc/use_soft_penalty` | Add the frozen corridor hinge-squared penalty. |
+| `tf_sfc/allow_partial_corridors` | Use a continuous certified prefix in the known local map. |
+| `tf_sfc/allow_ego_fallback` | Allow operational fallback; set false for strict method evaluation. |
+| `tf_sfc/min_valid_pieces` | Minimum certified prefix length required to enable TF-SFC. |
 | `tf_sfc/max_faces` | Face budget; the MVP needs at least 6 and produces 6. |
 | `tf_sfc/samples_per_piece` | Samples used for the trajectory envelope. |
 | `tf_sfc/safety_margin` | Padding around sampled trajectory points. |

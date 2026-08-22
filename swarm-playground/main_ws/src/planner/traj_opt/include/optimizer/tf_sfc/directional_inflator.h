@@ -12,7 +12,13 @@ namespace tf_sfc
 class DirectionalInflator
 {
 public:
-  typedef std::function<bool(const Eigen::Vector3d &)> OccupancyQuery;
+  enum class SpaceState
+  {
+    FREE,
+    OCCUPIED,
+    OUTSIDE_MAP
+  };
+  typedef std::function<SpaceState(const Eigen::Vector3d &)> OccupancyQuery;
 
   explicit DirectionalInflator(const Parameters &parameters);
 
@@ -20,7 +26,8 @@ public:
                const DirectionSet &directions,
                const double map_resolution,
                const OccupancyQuery &is_occupied,
-               Corridor &corridor) const;
+               Corridor &corridor,
+               FailureReason &failure_reason) const;
 
   static bool contains(const HPoly &hpoly,
                        const Eigen::Vector3d &point,
@@ -30,12 +37,12 @@ public:
                            const Eigen::Vector3d &point);
 
 private:
-  bool candidateIsFree(const Eigen::Vector3d &anchor,
-                       const Eigen::Matrix3d &frame,
-                       const Eigen::Vector3d &lower,
-                       const Eigen::Vector3d &upper,
-                       const double map_resolution,
-                       const OccupancyQuery &is_occupied) const;
+  SpaceState candidateState(const Eigen::Vector3d &anchor,
+                            const Eigen::Matrix3d &frame,
+                            const Eigen::Vector3d &lower,
+                            const Eigen::Vector3d &upper,
+                            const double map_resolution,
+                            const OccupancyQuery &is_occupied) const;
 
   static HPoly boundsToHPoly(const Eigen::Vector3d &anchor,
                             const Eigen::Matrix3d &frame,

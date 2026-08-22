@@ -25,7 +25,8 @@ const char *kRunHeader =
     "tf_sfc_enabled,direction_mode,success,collision_free,tf_sfc_generated,"
     "fallback_to_ego,projection_applied,lbfgs_result,total_planning_ms,"
     "optimizer_ms,corridor_generation_ms,lbfgs_iterations,restart_count,"
-    "rebound_count,piece_count,corridor_count,total_faces,mean_faces,"
+    "rebound_count,piece_count,corridor_count,failed_piece_count,first_failure_reason,"
+    "total_faces,mean_faces,"
     "mean_weighted_width,min_sample_slack,min_overlap_radius,"
     "direction_fallback_count,final_cost,trajectory_duration_s,"
     "trajectory_length_m_sampled";
@@ -33,7 +34,7 @@ const char *kRunHeader =
 const char *kCorridorHeader =
     "schema_version,run_id,timestamp_s,experiment_tag,drone_id,piece_id,"
     "face_count,generation_time_ms,weighted_width,min_sample_slack,"
-    "overlap_radius_to_next,valid,direction_fallback";
+    "overlap_radius_to_next,valid,direction_fallback,failure_reason";
 }
 
 ExperimentLogger::ExperimentLogger(const bool enabled,
@@ -113,7 +114,7 @@ bool ExperimentLogger::ensureDirectory() const
 
 bool ExperimentLogger::appendRun(const ExperimentRunRecord &record) const
 {
-  const std::string path = directory_ + "/ego_runs_drone_" +
+  const std::string path = directory_ + "/ego_runs_v2_drone_" +
                            std::to_string(record.drone_id) + ".csv";
   const bool header = fileNeedsHeader(path);
   std::ofstream output(path, std::ios::out | std::ios::app);
@@ -126,7 +127,7 @@ bool ExperimentLogger::appendRun(const ExperimentRunRecord &record) const
     output << kRunHeader << '\n';
   }
   output << std::setprecision(17)
-         << 1 << ',' << csv(record.run_id) << ',' << record.timestamp_s << ','
+         << 2 << ',' << csv(record.run_id) << ',' << record.timestamp_s << ','
          << csv(record.experiment_tag) << ',' << record.drone_id << ','
          << csv(record.status) << ',' << record.tf_sfc_enabled << ','
          << record.direction_mode << ',' << record.success << ','
@@ -136,7 +137,8 @@ bool ExperimentLogger::appendRun(const ExperimentRunRecord &record) const
          << record.optimizer_ms << ',' << record.corridor_generation_ms << ','
          << record.lbfgs_iterations << ',' << record.restart_count << ','
          << record.rebound_count << ',' << record.piece_count << ','
-         << record.corridor_count << ',' << record.total_faces << ','
+         << record.corridor_count << ',' << record.failed_piece_count << ','
+         << csv(record.first_failure_reason) << ',' << record.total_faces << ','
          << record.mean_faces << ',' << record.mean_weighted_width << ','
          << record.min_sample_slack << ',' << record.min_overlap_radius << ','
          << record.direction_fallback_count << ',' << record.final_cost << ','
@@ -152,7 +154,7 @@ bool ExperimentLogger::appendCorridors(const ExperimentRunRecord &record,
   {
     return true;
   }
-  const std::string path = directory_ + "/ego_corridors_drone_" +
+  const std::string path = directory_ + "/ego_corridors_v2_drone_" +
                            std::to_string(record.drone_id) + ".csv";
   const bool header = fileNeedsHeader(path);
   std::ofstream output(path, std::ios::out | std::ios::app);
@@ -168,12 +170,13 @@ bool ExperimentLogger::appendCorridors(const ExperimentRunRecord &record,
   for (const Corridor &corridor : corridors)
   {
     const CorridorMetrics &metrics = corridor.metrics;
-    output << 1 << ',' << csv(record.run_id) << ',' << record.timestamp_s << ','
+    output << 2 << ',' << csv(record.run_id) << ',' << record.timestamp_s << ','
            << csv(record.experiment_tag) << ',' << record.drone_id << ','
            << metrics.piece_id << ',' << metrics.face_count << ','
            << metrics.generation_time_ms << ',' << metrics.weighted_width << ','
            << metrics.min_sample_slack << ',' << metrics.overlap_radius_to_next << ','
-           << metrics.valid << ',' << metrics.direction_fallback << '\n';
+           << metrics.valid << ',' << metrics.direction_fallback << ','
+           << failureReasonName(metrics.failure_reason) << '\n';
   }
   return static_cast<bool>(output);
 }

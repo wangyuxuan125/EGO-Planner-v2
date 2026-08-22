@@ -3,9 +3,15 @@
     <arg name="map_size_y" value="200.0"/>
     <arg name="map_size_z" value=" 3.0"/>
     <arg name="odom_topic" value="visual_slam/odom" />
+    <arg name="map_seed" default="1"/>
     <arg name="tf_sfc_enabled" default="false"/>
     <arg name="tf_sfc_use_projection" default="false"/>
     <arg name="tf_sfc_use_soft_penalty" default="false"/>
+    <arg name="tf_sfc_allow_partial_corridors" default="true"/>
+    <arg name="tf_sfc_allow_ego_fallback" default="false"/>
+    <arg name="tf_sfc_min_valid_pieces" default="1"/>
+    <arg name="tf_sfc_safety_margin" default="0.10"/>
+    <arg name="tf_sfc_min_overlap_radius" default="0.08"/>
     <arg name="tf_sfc_direction_mode" default="1"/>
     <arg name="tf_sfc_log_enabled" default="true"/>
     <arg name="tf_sfc_log_directory" default="$(env HOME)/tf_sfc_results/ego"/>
@@ -17,7 +23,7 @@
         <param name="map/y_size" value="20" />
         <param name="map/z_size" value="3" />
         <param name="map/resolution" value="0.1"/>
-        <param name="ObstacleShape/seed" value="1"/>
+        <param name="ObstacleShape/seed" value="$(arg map_seed)"/>
         <param name="map/obs_num" value="100"/>
         <param name="ObstacleShape/lower_rad" value="0.5"/>
         <param name="ObstacleShape/upper_rad" value="0.7"/>
@@ -46,6 +52,11 @@
         <arg name="tf_sfc_enabled" value="$(arg tf_sfc_enabled)"/>
         <arg name="tf_sfc_use_projection" value="$(arg tf_sfc_use_projection)"/>
         <arg name="tf_sfc_use_soft_penalty" value="$(arg tf_sfc_use_soft_penalty)"/>
+        <arg name="tf_sfc_allow_partial_corridors" value="$(arg tf_sfc_allow_partial_corridors)"/>
+        <arg name="tf_sfc_allow_ego_fallback" value="$(arg tf_sfc_allow_ego_fallback)"/>
+        <arg name="tf_sfc_min_valid_pieces" value="$(arg tf_sfc_min_valid_pieces)"/>
+        <arg name="tf_sfc_safety_margin" value="$(arg tf_sfc_safety_margin)"/>
+        <arg name="tf_sfc_min_overlap_radius" value="$(arg tf_sfc_min_overlap_radius)"/>
         <arg name="tf_sfc_direction_mode" value="$(arg tf_sfc_direction_mode)"/>
         <arg name="tf_sfc_log_enabled" value="$(arg tf_sfc_log_enabled)"/>
         <arg name="tf_sfc_log_directory" value="$(arg tf_sfc_log_directory)"/>
