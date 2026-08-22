@@ -33,6 +33,13 @@
     <arg name="flight_type"/>
     <arg name="use_multitopology_trajs"/>
     <arg name="drone_id"/>
+    <arg name="tf_sfc_enabled" default="false"/>
+    <arg name="tf_sfc_use_projection" default="false"/>
+    <arg name="tf_sfc_use_soft_penalty" default="false"/>
+    <arg name="tf_sfc_direction_mode" default="1"/>
+    <arg name="tf_sfc_log_enabled" default="true"/>
+    <arg name="tf_sfc_log_directory" default="$(env HOME)/tf_sfc_results/ego"/>
+    <arg name="tf_sfc_experiment_tag" default="default"/>
     <!-- main node -->
     <!-- <node pkg="ego_planner" name="ego_planner_node" type="ego_planner_node" output="screen" launch-prefix="valgrind"> -->
     <node pkg="ego_planner" name="drone_$(arg drone_id)_ego_planner_node" type="ego_planner_node" output="screen">
@@ -136,10 +143,13 @@
         <param name="optimization/record_opt" value="true"/>
 
         <!-- TF-SFC MVP: disabled by default; 0=Frenet, 1=PCA, 2=sensitivity Gramian. -->
-        <param name="tf_sfc/enabled" value="false" type="bool"/>
-        <param name="tf_sfc/use_projection" value="false" type="bool"/>
-        <param name="tf_sfc/use_soft_penalty" value="false" type="bool"/>
-        <param name="tf_sfc/direction_mode" value="1" type="int"/>
+        <param name="tf_sfc/enabled" value="$(arg tf_sfc_enabled)" type="bool"/>
+        <param name="tf_sfc/use_projection" value="$(arg tf_sfc_use_projection)" type="bool"/>
+        <param name="tf_sfc/use_soft_penalty" value="$(arg tf_sfc_use_soft_penalty)" type="bool"/>
+        <param name="tf_sfc/direction_mode" value="$(arg tf_sfc_direction_mode)" type="int"/>
+        <param name="tf_sfc/log_enabled" value="$(arg tf_sfc_log_enabled)" type="bool"/>
+        <param name="tf_sfc/log_directory" value="$(arg tf_sfc_log_directory)" type="string"/>
+        <param name="tf_sfc/experiment_tag" value="$(arg tf_sfc_experiment_tag)" type="string"/>
         <param name="tf_sfc/max_faces" value="12" type="int"/>
         <param name="tf_sfc/samples_per_piece" value="8" type="int"/>
         <param name="tf_sfc/projection_passes" value="4" type="int"/>

@@ -26,6 +26,9 @@ struct Parameters
   bool enabled = false;
   bool use_projection = false;
   bool use_soft_penalty = false;
+  bool log_enabled = true;
+  std::string log_directory = "/tmp/tf_sfc_results/ego";
+  std::string experiment_tag = "default";
   DirectionMode direction_mode = DirectionMode::PCA;
   int max_faces = 12;
   int samples_per_piece = 8;

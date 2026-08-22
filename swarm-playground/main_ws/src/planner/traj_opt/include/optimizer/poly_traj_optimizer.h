@@ -5,7 +5,9 @@
 #include <path_searching/dyn_a_star.h>
 #include <plan_env/grid_map.h>
 #include <ros/ros.h>
+#include <memory>
 #include "optimizer/lbfgs.hpp"
+#include "optimizer/tf_sfc/experiment_logger.h"
 #include "optimizer/tf_sfc/tf_sfc_manager.h"
 #include <traj_utils/plan_container.hpp>
 #include "poly_traj_utils.hpp"
@@ -73,6 +75,7 @@ namespace ego_planner
     ConstraintPoints cps_;
     tf_sfc::Parameters tf_sfc_parameters_;
     std::shared_ptr<tf_sfc::TfSfcManager> tf_sfc_manager_;
+    std::unique_ptr<tf_sfc::ExperimentLogger> tf_sfc_experiment_logger_;
     tf_sfc::CorridorVector tf_corridors_;
     // PtsChk_t pts_check_;
 

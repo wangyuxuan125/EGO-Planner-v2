@@ -26,6 +26,13 @@
     <arg name="target4_z" default="0.0"/>
     <!-- topic of your odometry such as VIO or LIO -->
     <arg name="odom_topic"/>
+    <arg name="tf_sfc_enabled" default="false"/>
+    <arg name="tf_sfc_use_projection" default="false"/>
+    <arg name="tf_sfc_use_soft_penalty" default="false"/>
+    <arg name="tf_sfc_direction_mode" default="1"/>
+    <arg name="tf_sfc_log_enabled" default="true"/>
+    <arg name="tf_sfc_log_directory" default="$(env HOME)/tf_sfc_results/ego"/>
+    <arg name="tf_sfc_experiment_tag" default="default"/>
     <!-- main algorithm params -->
     <include file="$(find ego_planner)/launch/include/advanced_param.xml">
         <arg name="drone_id" value="$(arg drone_id)"/>
@@ -53,6 +60,13 @@
         <!--always set to 1.5 times grater than sensing horizen-->
         <arg name="planning_horizon" value="7.5" />
         <arg name="use_multitopology_trajs" value="false" />
+        <arg name="tf_sfc_enabled" value="$(arg tf_sfc_enabled)"/>
+        <arg name="tf_sfc_use_projection" value="$(arg tf_sfc_use_projection)"/>
+        <arg name="tf_sfc_use_soft_penalty" value="$(arg tf_sfc_use_soft_penalty)"/>
+        <arg name="tf_sfc_direction_mode" value="$(arg tf_sfc_direction_mode)"/>
+        <arg name="tf_sfc_log_enabled" value="$(arg tf_sfc_log_enabled)"/>
+        <arg name="tf_sfc_log_directory" value="$(arg tf_sfc_log_directory)"/>
+        <arg name="tf_sfc_experiment_tag" value="$(arg tf_sfc_experiment_tag)"/>
         <!-- 1: use 2D Nav Goal to select goal  -->
         <!-- 2: use global waypoints below  -->
         <arg name="flight_type" value="$(arg flight_type)" />
@@ -97,4 +111,3 @@
         <arg name="cmd_topic" value="drone_$(arg drone_id)_planning/pos_cmd"/>
     </include>
 </launch>
-    

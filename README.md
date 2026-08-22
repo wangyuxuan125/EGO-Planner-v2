@@ -8,4 +8,6 @@ Please follow the [tutorial PDF file](swarm-playground/[README]_Brief_Documentat
 This work was born out of [MINCO](https://github.com/ZJU-FAST-Lab/GCOPTER).
 If you find it interesting, please give both repos stars generously. Thanks.
 
+The experimental TF-SFC branch includes a Chinese [build, launch, and CSV logging guide](TF_SFC_EXPERIMENT_GUIDE.md).
+
 <img src="images/cover.jpg" alt="drawing" width="400"/>

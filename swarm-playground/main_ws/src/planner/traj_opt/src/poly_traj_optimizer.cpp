@@ -25,6 +25,14 @@ namespace ego_planner
     ros::Time t0 = ros::Time::now(), t1, t2;
     int restart_nums = 0, rebound_times = 0;
     bool flag_force_return, flag_still_unsafe, flag_success, flag_swarm_too_close;
+    bool tf_sfc_generated = false;
+    bool fallback_to_ego = false;
+    bool projection_applied = false;
+    double optimizer_time_ms = 0.0;
+    double tf_sfc_generation_ms = 0.0;
+    int total_lbfgs_iterations = 0;
+    int last_lbfgs_result = 0;
+    tf_sfc::CorridorVector logged_corridors;
     multitopology_data_.initial_obstacles_avoided = false;
     wei_swarm_mod_ = wei_swarm_;
 
@@ -40,19 +48,26 @@ namespace ego_planner
       // TF-SFC is frozen during one LBFGS solve. Failure leaves the original
       // EGO initialization, rebound logic, and final collision check untouched.
       jerkOpt_.generate(guidedInnerPts, initT);
-      if (tf_sfc_manager_->generate(jerkOpt_.getTraj(), tf_corridors_))
+      const ros::WallTime corridor_started = ros::WallTime::now();
+      const bool corridor_ok = tf_sfc_manager_->generate(jerkOpt_.getTraj(), tf_corridors_);
+      tf_sfc_generation_ms = (ros::WallTime::now() - corridor_started).toSec() * 1000.0;
+      if (corridor_ok)
       {
+        tf_sfc_generated = true;
+        logged_corridors = tf_corridors_;
         if (tf_sfc_parameters_.use_projection)
         {
           Eigen::MatrixXd projectedInnerPts = guidedInnerPts;
           if (tf_sfc_manager_->projectJunctions(projectedInnerPts, tf_corridors_))
           {
             guidedInnerPts = projectedInnerPts;
+            projection_applied = true;
           }
         }
       }
       else
       {
+        fallback_to_ego = true;
         tf_corridors_.clear();
         ROS_WARN_THROTTLE(1.0, "TF-SFC generation failed; using the original EGO optimization.");
       }
@@ -99,6 +114,9 @@ namespace ego_planner
       t2 = ros::Time::now();
       double time_ms = (t2 - t1).toSec() * 1000;
       double total_time_ms = (t2 - t0).toSec() * 1000;
+      optimizer_time_ms += time_ms;
+      total_lbfgs_iterations += iter_num_;
+      last_lbfgs_result = result;
 
       /* ---------- get result and check collision ---------- */
       if (result == lbfgs::LBFGS_CONVERGENCE ||
@@ -129,6 +147,7 @@ namespace ego_planner
             {
               tf_sfc_manager_->clearCorridors();
               tf_corridors_.clear();
+              fallback_to_ego = tf_sfc_generated;
             }
             flag_still_unsafe = true;
             restart_nums++;
@@ -149,6 +168,7 @@ namespace ego_planner
         {
           tf_sfc_manager_->clearCorridors();
           tf_corridors_.clear();
+          fallback_to_ego = tf_sfc_generated;
         }
         flag_force_return = true;
         rebound_times++;
@@ -162,6 +182,92 @@ namespace ego_planner
 
     } while ((flag_still_unsafe && restart_nums < 3) ||
              (flag_force_return && force_stop_type_ == STOP_FOR_REBOUND && rebound_times <= 20));
+
+    if (tf_sfc_experiment_logger_ && tf_sfc_experiment_logger_->enabled())
+    {
+      tf_sfc::ExperimentRunRecord record;
+      record.run_id = tf_sfc_experiment_logger_->makeRunId(drone_id_);
+      record.experiment_tag = tf_sfc_experiment_logger_->experimentTag();
+      record.status = flag_success ? "success" :
+                      (last_lbfgs_result == lbfgs::LBFGSERR_CANCELED ? "rebound_limit" :
+                       (flag_still_unsafe ? "collision_or_clearance_failure" : "solver_failure"));
+      record.timestamp_s = t0.toSec();
+      record.drone_id = drone_id_;
+      record.tf_sfc_enabled = tf_sfc_parameters_.enabled;
+      record.direction_mode = static_cast<int>(tf_sfc_parameters_.direction_mode);
+      record.success = flag_success;
+      record.collision_free = flag_success;
+      record.tf_sfc_generated = tf_sfc_generated;
+      record.fallback_to_ego = fallback_to_ego;
+      record.projection_applied = projection_applied;
+      record.lbfgs_result = last_lbfgs_result;
+      record.total_planning_ms = (ros::Time::now() - t0).toSec() * 1000.0;
+      record.optimizer_ms = optimizer_time_ms;
+      record.corridor_generation_ms = tf_sfc_generation_ms;
+      record.lbfgs_iterations = total_lbfgs_iterations;
+      record.restart_count = restart_nums;
+      record.rebound_count = rebound_times;
+      record.piece_count = piece_num_;
+      record.corridor_count = static_cast<int>(logged_corridors.size());
+      record.final_cost = final_cost;
+      const poly_traj::Trajectory &result_trajectory = jerkOpt_.getTraj();
+      record.trajectory_duration_s = result_trajectory.getPieceNum() > 0
+                                         ? result_trajectory.getTotalDuration()
+                                         : std::numeric_limits<double>::quiet_NaN();
+      if (result_trajectory.getPieceNum() > 0)
+      {
+        const int length_samples = std::max(20, 20 * result_trajectory.getPieceNum());
+        Eigen::Vector3d previous = result_trajectory.getPos(0.0);
+        for (int i = 1; i <= length_samples; ++i)
+        {
+          const Eigen::Vector3d current = result_trajectory.getPos(
+              record.trajectory_duration_s * static_cast<double>(i) /
+              static_cast<double>(length_samples));
+          record.trajectory_length_m_sampled += (current - previous).norm();
+          previous = current;
+        }
+      }
+      else
+      {
+        record.trajectory_length_m_sampled = std::numeric_limits<double>::quiet_NaN();
+      }
+
+      record.min_sample_slack = std::numeric_limits<double>::quiet_NaN();
+      record.min_overlap_radius = std::numeric_limits<double>::quiet_NaN();
+      record.mean_faces = std::numeric_limits<double>::quiet_NaN();
+      record.mean_weighted_width = std::numeric_limits<double>::quiet_NaN();
+      if (!logged_corridors.empty())
+      {
+        double total_weighted_width = 0.0;
+        double min_sample_slack = std::numeric_limits<double>::infinity();
+        double min_overlap_radius = std::numeric_limits<double>::infinity();
+        int overlap_count = 0;
+        for (const tf_sfc::Corridor &corridor : logged_corridors)
+        {
+          const tf_sfc::CorridorMetrics &metrics = corridor.metrics;
+          record.total_faces += metrics.face_count;
+          total_weighted_width += metrics.weighted_width;
+          min_sample_slack = std::min(min_sample_slack, metrics.min_sample_slack);
+          record.direction_fallback_count += metrics.direction_fallback ? 1 : 0;
+          if (metrics.overlap_radius_to_next >= 0.0)
+          {
+            min_overlap_radius = std::min(min_overlap_radius,
+                                          metrics.overlap_radius_to_next);
+            ++overlap_count;
+          }
+        }
+        record.mean_faces = static_cast<double>(record.total_faces) /
+                            static_cast<double>(logged_corridors.size());
+        record.mean_weighted_width = total_weighted_width /
+                                     static_cast<double>(logged_corridors.size());
+        record.min_sample_slack = min_sample_slack;
+        if (overlap_count > 0)
+        {
+          record.min_overlap_radius = min_overlap_radius;
+        }
+      }
+      tf_sfc_experiment_logger_->log(record, logged_corridors);
+    }
 
     return flag_success;
   }
@@ -1680,6 +1786,11 @@ namespace ego_planner
     nh.param("tf_sfc/enabled", tf_sfc_parameters_.enabled, false);
     nh.param("tf_sfc/use_projection", tf_sfc_parameters_.use_projection, false);
     nh.param("tf_sfc/use_soft_penalty", tf_sfc_parameters_.use_soft_penalty, false);
+    nh.param("tf_sfc/log_enabled", tf_sfc_parameters_.log_enabled, true);
+    nh.param<std::string>("tf_sfc/log_directory", tf_sfc_parameters_.log_directory,
+                          "/tmp/tf_sfc_results/ego");
+    nh.param<std::string>("tf_sfc/experiment_tag", tf_sfc_parameters_.experiment_tag,
+                          "default");
     nh.param("tf_sfc/max_faces", tf_sfc_parameters_.max_faces, 12);
     nh.param("tf_sfc/samples_per_piece", tf_sfc_parameters_.samples_per_piece, 8);
     nh.param("tf_sfc/projection_passes", tf_sfc_parameters_.projection_passes, 4);
@@ -1714,6 +1825,10 @@ namespace ego_planner
     tf_sfc_parameters_.inflation_step = std::max(tf_sfc_parameters_.inflation_step, 1.0e-3);
     tf_sfc_parameters_.weight = std::max(tf_sfc_parameters_.weight, 0.0);
     tf_sfc_parameters_.penalty_epsilon = std::max(tf_sfc_parameters_.penalty_epsilon, 0.0);
+    tf_sfc_experiment_logger_.reset(new tf_sfc::ExperimentLogger(
+        tf_sfc_parameters_.log_enabled,
+        tf_sfc_parameters_.log_directory,
+        tf_sfc_parameters_.experiment_tag));
   }
 
   void PolyTrajOptimizer::setEnvironment(const GridMap::Ptr &map)

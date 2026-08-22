@@ -138,6 +138,9 @@
         <param name="tf_sfc/use_projection" value="false" type="bool"/>
         <param name="tf_sfc/use_soft_penalty" value="false" type="bool"/>
         <param name="tf_sfc/direction_mode" value="1" type="int"/>
+        <param name="tf_sfc/log_enabled" value="true" type="bool"/>
+        <param name="tf_sfc/log_directory" value="$(env HOME)/tf_sfc_results/ego" type="string"/>
+        <param name="tf_sfc/experiment_tag" value="test" type="string"/>
         <param name="tf_sfc/max_faces" value="12" type="int"/>
         <param name="tf_sfc/samples_per_piece" value="8" type="int"/>
         <param name="tf_sfc/projection_passes" value="4" type="int"/>
