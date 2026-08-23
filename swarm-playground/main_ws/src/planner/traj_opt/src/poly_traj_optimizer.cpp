@@ -44,22 +44,99 @@ bool buildFixedPieceSeedPath(const GridMap::Ptr &grid_map,
                              const Eigen::Vector3d &start,
                              const Eigen::Vector3d &finish,
                              const int piece_num,
-                             ego_planner::tf_sfc::PointVector &seed_path)
+                             const bool allow_partial_corridors,
+                             const int min_valid_pieces,
+                             ego_planner::tf_sfc::PointVector &seed_path,
+                             int &covered_piece_num,
+                             ego_planner::tf_sfc::FailureReason &failure_reason)
 {
   seed_path.clear();
-  if (!grid_map || !a_star || piece_num <= 0 ||
-      a_star->AstarSearch(grid_map->getResolution(), start, finish) != ASTAR_RET::SUCCESS)
+  covered_piece_num = 0;
+  failure_reason = ego_planner::tf_sfc::FailureReason::INVALID_INPUT;
+  if (!grid_map || !a_star || piece_num <= 0 || !start.allFinite() ||
+      !finish.allFinite())
   {
+    return false;
+  }
+
+  if (!grid_map->isInInflatedMap(start) ||
+      grid_map->getInflateOccupancy(start) != 0)
+  {
+    failure_reason = ego_planner::tf_sfc::FailureReason::SEED_PATH_FAILURE;
+    return false;
+  }
+
+  Eigen::Vector3d seed_finish = finish;
+  bool full_coverage = grid_map->isInInflatedMap(finish) &&
+                       grid_map->getInflateOccupancy(finish) == 0;
+  double coverage_ratio = 1.0;
+  if (!full_coverage)
+  {
+    if (!allow_partial_corridors || piece_num <= 1)
+    {
+      failure_reason = ego_planner::tf_sfc::FailureReason::OUTSIDE_LOCAL_MAP;
+      return false;
+    }
+
+    Eigen::Vector3d map_low, map_high;
+    grid_map->getInflatedMapBounds(map_low, map_high);
+    const Eigen::Vector3d delta = finish - start;
+    const double distance = delta.norm();
+    if (distance <= 2.0 * grid_map->getResolution())
+    {
+      failure_reason = ego_planner::tf_sfc::FailureReason::OUTSIDE_LOCAL_MAP;
+      return false;
+    }
+
+    double boundary_ratio = 1.0;
+    for (int axis = 0; axis < 3; ++axis)
+    {
+      if (delta(axis) > 1.0e-9)
+      {
+        boundary_ratio = std::min(boundary_ratio,
+                                  (map_high(axis) - start(axis)) / delta(axis));
+      }
+      else if (delta(axis) < -1.0e-9)
+      {
+        boundary_ratio = std::min(boundary_ratio,
+                                  (map_low(axis) - start(axis)) / delta(axis));
+      }
+    }
+    const double ratio_step = grid_map->getResolution() / distance;
+    coverage_ratio = std::min(1.0, boundary_ratio) - 1.5 * ratio_step;
+    bool found_free_target = false;
+    for (; coverage_ratio > ratio_step; coverage_ratio -= ratio_step)
+    {
+      seed_finish = start + coverage_ratio * delta;
+      if (grid_map->isInInflatedMap(seed_finish) &&
+          grid_map->getInflateOccupancy(seed_finish) == 0)
+      {
+        found_free_target = true;
+        break;
+      }
+    }
+    if (!found_free_target)
+    {
+      failure_reason = ego_planner::tf_sfc::FailureReason::OUTSIDE_LOCAL_MAP;
+      return false;
+    }
+  }
+
+  if (a_star->AstarSearch(grid_map->getResolution(), start, seed_finish) !=
+      ASTAR_RET::SUCCESS)
+  {
+    failure_reason = ego_planner::tf_sfc::FailureReason::SEED_PATH_FAILURE;
     return false;
   }
 
   std::vector<Eigen::Vector3d> raw_path = a_star->getPath();
   if (raw_path.empty())
   {
+    failure_reason = ego_planner::tf_sfc::FailureReason::SEED_PATH_FAILURE;
     return false;
   }
   raw_path.front() = start;
-  raw_path.back() = finish;
+  raw_path.back() = seed_finish;
 
   ego_planner::tf_sfc::PointVector simplified;
   simplified.push_back(raw_path.front());
@@ -74,6 +151,7 @@ bool buildFixedPieceSeedPath(const GridMap::Ptr &grid_map,
     }
     if (!segmentIsFree(grid_map, raw_path[current], raw_path[next]))
     {
+      failure_reason = ego_planner::tf_sfc::FailureReason::SEED_PATH_FAILURE;
       return false;
     }
     simplified.push_back(raw_path[next]);
@@ -81,12 +159,24 @@ bool buildFixedPieceSeedPath(const GridMap::Ptr &grid_map,
   }
 
   const int segment_count = static_cast<int>(simplified.size()) - 1;
-  if (segment_count <= 0 || segment_count > piece_num)
+  const int max_covered_piece_num = full_coverage ? piece_num : piece_num - 1;
+  if (segment_count <= 0 ||
+      max_covered_piece_num < std::max(min_valid_pieces, 1) ||
+      segment_count > max_covered_piece_num)
   {
+    failure_reason = ego_planner::tf_sfc::FailureReason::INSUFFICIENT_PIECES;
     return false;
   }
+  const int proportional_piece_num = full_coverage
+                                         ? piece_num
+                                         : std::max(1, static_cast<int>(std::floor(
+                                                           piece_num * coverage_ratio)));
+  covered_piece_num = std::min(
+      max_covered_piece_num,
+      std::max(segment_count,
+               std::max(min_valid_pieces, proportional_piece_num)));
   std::vector<int> divisions(segment_count, 1);
-  for (int remaining = piece_num - segment_count; remaining > 0; --remaining)
+  for (int remaining = covered_piece_num - segment_count; remaining > 0; --remaining)
   {
     int best = 0;
     double best_length = -1.0;
@@ -116,7 +206,10 @@ bool buildFixedPieceSeedPath(const GridMap::Ptr &grid_map,
               static_cast<double>(divisions[segment_id]));
     }
   }
-  return static_cast<int>(seed_path.size()) == piece_num + 1;
+  const bool valid = static_cast<int>(seed_path.size()) == covered_piece_num + 1;
+  failure_reason = valid ? ego_planner::tf_sfc::FailureReason::NONE
+                         : ego_planner::tf_sfc::FailureReason::SEED_PATH_FAILURE;
+  return valid;
 }
 }
 
@@ -168,6 +261,8 @@ namespace ego_planner
       if (requested_corridor_method == "ellipsoid_decomp")
       {
         tf_sfc::PointVector seed_path;
+        int covered_piece_num = 0;
+        tf_sfc::FailureReason seed_failure_reason = tf_sfc::FailureReason::NONE;
         if (!tf_sfc_manager_->ellipsoidDecompAvailable())
         {
           tf_sfc::Corridor failed;
@@ -176,20 +271,27 @@ namespace ego_planner
           tf_corridors_.push_back(failed);
         }
         else if (!buildFixedPieceSeedPath(grid_map_, a_star_, iniState.col(0),
-                                          finState.col(0), piece_num_, seed_path))
+                                          finState.col(0), piece_num_,
+                                          tf_sfc_parameters_.allow_partial_corridors,
+                                          tf_sfc_parameters_.min_valid_pieces,
+                                          seed_path, covered_piece_num,
+                                          seed_failure_reason))
         {
           tf_sfc::Corridor failed;
           failed.metrics.piece_id = 0;
-          failed.metrics.failure_reason = tf_sfc::FailureReason::SEED_PATH_FAILURE;
+          failed.metrics.failure_reason = seed_failure_reason;
           tf_corridors_.push_back(failed);
         }
         else
         {
-          for (int point_id = 1; point_id < piece_num_; ++point_id)
+          for (int point_id = 1; point_id <= covered_piece_num &&
+                                 point_id < piece_num_;
+               ++point_id)
           {
             guidedInnerPts.col(point_id - 1) = seed_path[point_id];
           }
           corridor_ok = tf_sfc_manager_->generateEllipsoidDecomp(seed_path,
+                                                                  piece_num_,
                                                                   tf_corridors_);
         }
       }
@@ -269,8 +371,20 @@ namespace ego_planner
           {
             tf_sfc_experiment_logger_->log(record, logged_corridors);
           }
-          ROS_ERROR_THROTTLE(1.0,
-                             "TF-SFC generation failed and fallback is disabled; rejecting this plan.");
+          const char *first_failure = "unknown";
+          for (const tf_sfc::Corridor &corridor : logged_corridors)
+          {
+            if (!corridor.metrics.valid)
+            {
+              first_failure = tf_sfc::failureReasonName(
+                  corridor.metrics.failure_reason);
+              break;
+            }
+          }
+          ROS_ERROR_THROTTLE(
+              1.0,
+              "TF-SFC generation failed (method=%s, first_failure=%s) and fallback is disabled; rejecting this plan.",
+              requested_corridor_method.c_str(), first_failure);
           return false;
         }
         fallback_to_ego = true;

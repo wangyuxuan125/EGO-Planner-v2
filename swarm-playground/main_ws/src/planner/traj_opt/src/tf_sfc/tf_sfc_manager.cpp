@@ -112,6 +112,7 @@ bool TfSfcManager::ellipsoidDecompAvailable() const
 }
 
 bool TfSfcManager::generateEllipsoidDecomp(const PointVector &seed_path,
+                                           const int expected_piece_count,
                                            CorridorVector &corridors)
 {
   corridors.clear();
@@ -124,7 +125,8 @@ bool TfSfcManager::generateEllipsoidDecomp(const PointVector &seed_path,
   corridors_ = corridors;
   return false;
 #else
-  if (!grid_map_ || seed_path.size() < 2)
+  if (!grid_map_ || seed_path.size() < 2 || expected_piece_count <= 0 ||
+      static_cast<int>(seed_path.size()) - 1 > expected_piece_count)
   {
     Corridor failed;
     failed.metrics.piece_id = 0;
@@ -223,7 +225,37 @@ bool TfSfcManager::generateEllipsoidDecomp(const PointVector &seed_path,
     return false;
   }
 
-  corridors.resize(polyhedrons.size());
+  corridors.resize(expected_piece_count);
+  for (int piece_id = 0; piece_id < expected_piece_count; ++piece_id)
+  {
+    corridors[piece_id].metrics.piece_id = piece_id;
+    if (piece_id == static_cast<int>(polyhedrons.size()))
+    {
+      corridors[piece_id].metrics.failure_reason = FailureReason::OUTSIDE_LOCAL_MAP;
+    }
+    else if (piece_id > static_cast<int>(polyhedrons.size()))
+    {
+      corridors[piece_id].metrics.failure_reason = FailureReason::SKIPPED_AFTER_FAILURE;
+    }
+  }
+  int valid_count = 0;
+  const auto finish_prefix = [&]() {
+    corridors_ = corridors;
+    const bool enough_valid =
+        valid_count >= std::max(parameters_.min_valid_pieces, 1);
+    return enough_valid &&
+           (parameters_.allow_partial_corridors ||
+            valid_count == expected_piece_count);
+  };
+  const auto mark_remaining_skipped = [&](const int first_piece_id) {
+    for (int skipped_id = first_piece_id;
+         skipped_id < expected_piece_count; ++skipped_id)
+    {
+      corridors[skipped_id].metrics.piece_id = skipped_id;
+      corridors[skipped_id].metrics.failure_reason =
+          FailureReason::SKIPPED_AFTER_FAILURE;
+    }
+  };
   for (int piece_id = 0; piece_id < static_cast<int>(polyhedrons.size()); ++piece_id)
   {
     Corridor &corridor = corridors[piece_id];
@@ -240,8 +272,8 @@ bool TfSfcManager::generateEllipsoidDecomp(const PointVector &seed_path,
       if (!normal.allFinite() || norm <= 1.0e-9)
       {
         corridor.metrics.failure_reason = FailureReason::DECOMP_FAILURE;
-        corridors_ = corridors;
-        return false;
+        mark_remaining_skipped(piece_id + 1);
+        return finish_prefix();
       }
       normal /= norm;
       corridor.hpoly.row(row).head<3>() = normal.transpose();
@@ -261,8 +293,8 @@ bool TfSfcManager::generateEllipsoidDecomp(const PointVector &seed_path,
     if (!valid)
     {
       corridor.metrics.failure_reason = FailureReason::DECOMP_FAILURE;
-      corridors_ = corridors;
-      return false;
+      mark_remaining_skipped(piece_id + 1);
+      return finish_prefix();
     }
     const Eigen::Vector3d midpoint = 0.5 * (path[piece_id] + path[piece_id + 1]);
     corridor.metrics.min_sample_slack = std::min(
@@ -283,14 +315,14 @@ bool TfSfcManager::generateEllipsoidDecomp(const PointVector &seed_path,
       {
         corridor.metrics.valid = false;
         corridor.metrics.failure_reason = FailureReason::OVERLAP_TOO_SMALL;
-        corridors_ = corridors;
-        return false;
+        mark_remaining_skipped(piece_id + 1);
+        return finish_prefix();
       }
     }
+    ++valid_count;
   }
 
-  corridors_ = corridors;
-  return !corridors.empty();
+  return finish_prefix();
 #endif
 }
 

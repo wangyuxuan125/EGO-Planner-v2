@@ -18,6 +18,7 @@ public:
   bool generate(const poly_traj::Trajectory &trajectory, CorridorVector &corridors);
 
   bool generateEllipsoidDecomp(const PointVector &seed_path,
+                               int expected_piece_count,
                                CorridorVector &corridors);
 
   bool ellipsoidDecompAvailable() const;

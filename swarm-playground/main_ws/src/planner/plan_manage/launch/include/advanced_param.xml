@@ -37,7 +37,7 @@
     <arg name="tf_sfc_corridor_method" default="obb"/>
     <arg name="tf_sfc_use_projection" default="false"/>
     <arg name="tf_sfc_use_soft_penalty" default="true"/>
-    <arg name="tf_sfc_allow_partial_corridors" default="false"/>
+    <arg name="tf_sfc_allow_partial_corridors" default="true"/>
     <arg name="tf_sfc_allow_ego_fallback" default="false"/>
     <arg name="tf_sfc_visualization_enabled" default="true"/>
     <arg name="tf_sfc_visualization_frame" default="world"/>

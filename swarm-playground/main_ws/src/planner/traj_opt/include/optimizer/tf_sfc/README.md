@@ -20,6 +20,9 @@ EGO-Planner-v2's original rebound, restart, swarm, and final collision-check pat
 - A certified-prefix policy: a piece outside the current local map no longer
   discards preceding valid corridors. Invalid and skipped pieces carry explicit
   failure reasons and receive no corridor penalty.
+- EllipsoidDecomp uses the same certified-prefix policy: its A* seed terminates
+  one voxel inside the rolling-map boundary and preserves at least one
+  unconstrained tail piece when the planning horizon extends beyond known space.
 - Configurable EGO fallback. Operational launches may allow fallback; strict
   experiments can reject generation failures instead of silently counting an
   original-EGO result as TF-SFC success.

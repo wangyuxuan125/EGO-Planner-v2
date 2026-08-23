@@ -53,7 +53,8 @@ enum class FailureReason
   SKIPPED_AFTER_FAILURE = 6,
   SEED_PATH_FAILURE = 7,
   DECOMP_UTIL_UNAVAILABLE = 8,
-  DECOMP_FAILURE = 9
+  DECOMP_FAILURE = 9,
+  INSUFFICIENT_PIECES = 10
 };
 
 inline const char *failureReasonName(const FailureReason reason)
@@ -70,6 +71,7 @@ inline const char *failureReasonName(const FailureReason reason)
   case FailureReason::SEED_PATH_FAILURE: return "seed_path_failure";
   case FailureReason::DECOMP_UTIL_UNAVAILABLE: return "decomp_util_unavailable";
   case FailureReason::DECOMP_FAILURE: return "decomp_failure";
+  case FailureReason::INSUFFICIENT_PIECES: return "insufficient_pieces";
   }
   return "unknown";
 }
