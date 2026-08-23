@@ -146,6 +146,8 @@ public:
   inline int getInflateOccupancy(Eigen::Vector3d pos);
   inline bool isInInflatedMap(const Eigen::Vector3d &pos);
   inline double getResolution();
+  inline void getInflatedMapBounds(Eigen::Vector3d &low,
+                                   Eigen::Vector3d &high) const;
   bool getOdomDepthTimeout() { return md_.flag_depth_odom_timeout_; }
 
   typedef std::shared_ptr<GridMap> Ptr;
@@ -415,6 +417,13 @@ inline int GridMap::getInflateOccupancy(Eigen::Vector3d pos)
 inline bool GridMap::isInInflatedMap(const Eigen::Vector3d &pos)
 {
   return isInInfBuf(pos);
+}
+
+inline void GridMap::getInflatedMapBounds(Eigen::Vector3d &low,
+                                          Eigen::Vector3d &high) const
+{
+  low = md_.ringbuffer_inf_lowbound3d_;
+  high = md_.ringbuffer_inf_upbound3d_;
 }
 
 inline bool GridMap::isInBuf(const Eigen::Vector3d &pos)

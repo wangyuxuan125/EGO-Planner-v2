@@ -16,6 +16,8 @@ struct ExperimentRunRecord
   std::string run_id;
   std::string experiment_tag;
   std::string status;
+  std::string requested_method = "obb";
+  std::string method = "obb";
   double timestamp_s = 0.0;
   int drone_id = -1;
   bool tf_sfc_enabled = false;

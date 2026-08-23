@@ -17,6 +17,11 @@ public:
 
   bool generate(const poly_traj::Trajectory &trajectory, CorridorVector &corridors);
 
+  bool generateEllipsoidDecomp(const PointVector &seed_path,
+                               CorridorVector &corridors);
+
+  bool ellipsoidDecompAvailable() const;
+
   void clearCorridors();
 
   bool projectJunctions(Eigen::MatrixXd &inner_points,

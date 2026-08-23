@@ -7,6 +7,10 @@
 #include <cmath>
 #include <limits>
 
+#ifdef TF_SFC_WITH_DECOMP_UTIL
+#include <decomp_util/ellipsoid_decomp.h>
+#endif
+
 namespace ego_planner
 {
 namespace tf_sfc
@@ -96,6 +100,198 @@ bool TfSfcManager::generate(const poly_traj::Trajectory &trajectory,
   const bool enough_valid = valid_count >= std::max(parameters_.min_valid_pieces, 1);
   return enough_valid &&
          (parameters_.allow_partial_corridors || valid_count == trajectory.getPieceNum());
+}
+
+bool TfSfcManager::ellipsoidDecompAvailable() const
+{
+#ifdef TF_SFC_WITH_DECOMP_UTIL
+  return true;
+#else
+  return false;
+#endif
+}
+
+bool TfSfcManager::generateEllipsoidDecomp(const PointVector &seed_path,
+                                           CorridorVector &corridors)
+{
+  corridors.clear();
+  corridors_.clear();
+#ifndef TF_SFC_WITH_DECOMP_UTIL
+  Corridor failed;
+  failed.metrics.piece_id = 0;
+  failed.metrics.failure_reason = FailureReason::DECOMP_UTIL_UNAVAILABLE;
+  corridors.push_back(failed);
+  corridors_ = corridors;
+  return false;
+#else
+  if (!grid_map_ || seed_path.size() < 2)
+  {
+    Corridor failed;
+    failed.metrics.piece_id = 0;
+    failed.metrics.failure_reason = FailureReason::INVALID_INPUT;
+    corridors.push_back(failed);
+    corridors_ = corridors;
+    return false;
+  }
+
+  vec_Vec3f path;
+  path.reserve(seed_path.size());
+  for (const Eigen::Vector3d &point : seed_path)
+  {
+    if (!point.allFinite() || !grid_map_->isInInflatedMap(point) ||
+        grid_map_->getInflateOccupancy(point) != 0)
+    {
+      Corridor failed;
+      failed.metrics.piece_id = static_cast<int>(path.size());
+      failed.metrics.failure_reason = FailureReason::SEED_PATH_FAILURE;
+      corridors.push_back(failed);
+      corridors_ = corridors;
+      return false;
+    }
+    if (path.empty() || (point - path.back()).norm() > 1.0e-6)
+    {
+      path.push_back(point);
+    }
+  }
+  if (path.size() < 2)
+  {
+    Corridor failed;
+    failed.metrics.piece_id = 0;
+    failed.metrics.failure_reason = FailureReason::SEED_PATH_FAILURE;
+    corridors.push_back(failed);
+    corridors_ = corridors;
+    return false;
+  }
+
+  Eigen::Vector3d map_low, map_high;
+  grid_map_->getInflatedMapBounds(map_low, map_high);
+  const double padding = std::max(
+      parameters_.decomp_local_bbox_forward,
+      std::max(parameters_.decomp_local_bbox_lateral,
+               parameters_.decomp_local_bbox_vertical));
+  Eigen::Vector3d query_low = path.front();
+  Eigen::Vector3d query_high = path.front();
+  for (const Vec3f &point : path)
+  {
+    query_low = query_low.cwiseMin(point);
+    query_high = query_high.cwiseMax(point);
+  }
+  query_low = (query_low.array() - padding).matrix().cwiseMax(map_low);
+  query_high = (query_high.array() + padding).matrix().cwiseMin(map_high);
+
+  vec_Vec3f obstacles;
+  const double resolution = grid_map_->getResolution();
+  const Eigen::Vector3d first =
+      (query_low.array() / resolution).ceil().matrix() * resolution;
+  for (double x = first.x(); x <= query_high.x() + 1.0e-9; x += resolution)
+  {
+    for (double y = first.y(); y <= query_high.y() + 1.0e-9; y += resolution)
+    {
+      for (double z = first.z(); z <= query_high.z() + 1.0e-9; z += resolution)
+      {
+        const Eigen::Vector3d point(x, y, z);
+        if (grid_map_->isInInflatedMap(point) &&
+            grid_map_->getInflateOccupancy(point) != 0)
+        {
+          obstacles.push_back(point);
+        }
+      }
+    }
+  }
+
+  const auto started = std::chrono::steady_clock::now();
+  EllipsoidDecomp3D decomp;
+  decomp.set_obs(obstacles);
+  Vec3f local_bbox;
+  local_bbox << std::max(parameters_.decomp_local_bbox_forward, resolution),
+                std::max(parameters_.decomp_local_bbox_lateral, resolution),
+                std::max(parameters_.decomp_local_bbox_vertical, resolution);
+  decomp.set_local_bbox(local_bbox);
+  decomp.dilate(path);
+  const vec_E<Polyhedron3D> polyhedrons = decomp.get_polyhedrons();
+  const double total_ms = std::chrono::duration<double, std::milli>(
+                              std::chrono::steady_clock::now() - started)
+                              .count();
+  if (polyhedrons.size() + 1 != path.size())
+  {
+    Corridor failed;
+    failed.metrics.piece_id = 0;
+    failed.metrics.failure_reason = FailureReason::DECOMP_FAILURE;
+    failed.metrics.generation_time_ms = total_ms;
+    corridors.push_back(failed);
+    corridors_ = corridors;
+    return false;
+  }
+
+  corridors.resize(polyhedrons.size());
+  for (int piece_id = 0; piece_id < static_cast<int>(polyhedrons.size()); ++piece_id)
+  {
+    Corridor &corridor = corridors[piece_id];
+    corridor.metrics.piece_id = piece_id;
+    corridor.metrics.generation_time_ms =
+        total_ms / static_cast<double>(polyhedrons.size());
+    const vec_E<Hyperplane3D> planes = polyhedrons[piece_id].hyperplanes();
+    corridor.hpoly.resize(planes.size() + 6, 4);
+    int row = 0;
+    for (const Hyperplane3D &plane : planes)
+    {
+      Eigen::Vector3d normal = plane.n_;
+      const double norm = normal.norm();
+      if (!normal.allFinite() || norm <= 1.0e-9)
+      {
+        corridor.metrics.failure_reason = FailureReason::DECOMP_FAILURE;
+        corridors_ = corridors;
+        return false;
+      }
+      normal /= norm;
+      corridor.hpoly.row(row).head<3>() = normal.transpose();
+      corridor.hpoly(row++, 3) = normal.dot(plane.p_);
+    }
+    corridor.hpoly.row(row++) << 1.0, 0.0, 0.0, map_high.x();
+    corridor.hpoly.row(row++) << -1.0, 0.0, 0.0, -map_low.x();
+    corridor.hpoly.row(row++) << 0.0, 1.0, 0.0, map_high.y();
+    corridor.hpoly.row(row++) << 0.0, -1.0, 0.0, -map_low.y();
+    corridor.hpoly.row(row++) << 0.0, 0.0, 1.0, map_high.z();
+    corridor.hpoly.row(row++) << 0.0, 0.0, -1.0, -map_low.z();
+
+    corridor.anchor = 0.5 * (path[piece_id] + path[piece_id + 1]);
+    const bool valid = corridor.hpoly.allFinite() &&
+                       DirectionalInflator::contains(corridor.hpoly, path[piece_id], 1.0e-6) &&
+                       DirectionalInflator::contains(corridor.hpoly, path[piece_id + 1], 1.0e-6);
+    if (!valid)
+    {
+      corridor.metrics.failure_reason = FailureReason::DECOMP_FAILURE;
+      corridors_ = corridors;
+      return false;
+    }
+    const Eigen::Vector3d midpoint = 0.5 * (path[piece_id] + path[piece_id + 1]);
+    corridor.metrics.min_sample_slack = std::min(
+        DirectionalInflator::pointSlack(corridor.hpoly, path[piece_id]),
+        std::min(DirectionalInflator::pointSlack(corridor.hpoly, midpoint),
+                 DirectionalInflator::pointSlack(corridor.hpoly, path[piece_id + 1])));
+    corridor.metrics.weighted_width = 2.0 * corridor.metrics.min_sample_slack;
+    corridor.metrics.face_count = corridor.hpoly.rows();
+    corridor.metrics.valid = true;
+    corridor.metrics.failure_reason = FailureReason::NONE;
+
+    if (piece_id > 0)
+    {
+      const double radius = overlapRadius(corridors[piece_id - 1], corridor,
+                                          path[piece_id]);
+      corridors[piece_id - 1].metrics.overlap_radius_to_next = radius;
+      if (radius + 1.0e-9 < parameters_.min_overlap_radius)
+      {
+        corridor.metrics.valid = false;
+        corridor.metrics.failure_reason = FailureReason::OVERLAP_TOO_SMALL;
+        corridors_ = corridors;
+        return false;
+      }
+    }
+  }
+
+  corridors_ = corridors;
+  return !corridors.empty();
+#endif
 }
 
 void TfSfcManager::clearCorridors()

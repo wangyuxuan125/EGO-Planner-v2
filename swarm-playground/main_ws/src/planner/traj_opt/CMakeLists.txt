@@ -31,6 +31,16 @@ else()
   message(STATUS "traj_opt: decomp_ros_msgs not found; corridor visualization disabled")
 endif()
 
+# DecompROS above only supplies messages/RViz display. DecompUtil is the
+# optional algorithm dependency for the Liu et al. (ICRA 2017) baseline.
+find_package(decomp_util QUIET)
+if(decomp_util_FOUND)
+  add_definitions(-DTF_SFC_WITH_DECOMP_UTIL)
+  message(STATUS "traj_opt: Liu/DecompUtil corridor baseline enabled")
+else()
+  message(STATUS "traj_opt: decomp_util not found; ellipsoid_decomp unavailable")
+endif()
+
 catkin_package(
  INCLUDE_DIRS include
  LIBRARIES traj_opt
@@ -43,6 +53,7 @@ include_directories(
     include 
     ${catkin_INCLUDE_DIRS}
     ${decomp_ros_msgs_INCLUDE_DIRS}
+    ${DECOMP_UTIL_INCLUDE_DIRS}
     ${Eigen3_INCLUDE_DIRS} 
     ${PCL_INCLUDE_DIRS}
 )

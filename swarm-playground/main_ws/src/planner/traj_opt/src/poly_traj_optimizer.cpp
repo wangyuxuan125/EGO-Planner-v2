@@ -11,6 +11,115 @@ using namespace std;
   if (VERBOSE_OUTPUT)         \
   printf(STR, __VA_ARGS__)
 
+namespace
+{
+bool segmentIsFree(const GridMap::Ptr &grid_map,
+                   const Eigen::Vector3d &start,
+                   const Eigen::Vector3d &finish)
+{
+  if (!grid_map || !start.allFinite() || !finish.allFinite())
+  {
+    return false;
+  }
+  const double resolution = grid_map->getResolution();
+  const double length = (finish - start).norm();
+  const int samples = std::max(1, static_cast<int>(std::ceil(length /
+                                                             std::max(0.5 * resolution, 1.0e-3))));
+  for (int sample_id = 0; sample_id <= samples; ++sample_id)
+  {
+    const double alpha = static_cast<double>(sample_id) /
+                         static_cast<double>(samples);
+    const Eigen::Vector3d point = (1.0 - alpha) * start + alpha * finish;
+    if (!grid_map->isInInflatedMap(point) ||
+        grid_map->getInflateOccupancy(point) != 0)
+    {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool buildFixedPieceSeedPath(const GridMap::Ptr &grid_map,
+                             const AStar::Ptr &a_star,
+                             const Eigen::Vector3d &start,
+                             const Eigen::Vector3d &finish,
+                             const int piece_num,
+                             ego_planner::tf_sfc::PointVector &seed_path)
+{
+  seed_path.clear();
+  if (!grid_map || !a_star || piece_num <= 0 ||
+      a_star->AstarSearch(grid_map->getResolution(), start, finish) != ASTAR_RET::SUCCESS)
+  {
+    return false;
+  }
+
+  std::vector<Eigen::Vector3d> raw_path = a_star->getPath();
+  if (raw_path.empty())
+  {
+    return false;
+  }
+  raw_path.front() = start;
+  raw_path.back() = finish;
+
+  ego_planner::tf_sfc::PointVector simplified;
+  simplified.push_back(raw_path.front());
+  int current = 0;
+  while (current + 1 < static_cast<int>(raw_path.size()))
+  {
+    int next = static_cast<int>(raw_path.size()) - 1;
+    while (next > current + 1 &&
+           !segmentIsFree(grid_map, raw_path[current], raw_path[next]))
+    {
+      --next;
+    }
+    if (!segmentIsFree(grid_map, raw_path[current], raw_path[next]))
+    {
+      return false;
+    }
+    simplified.push_back(raw_path[next]);
+    current = next;
+  }
+
+  const int segment_count = static_cast<int>(simplified.size()) - 1;
+  if (segment_count <= 0 || segment_count > piece_num)
+  {
+    return false;
+  }
+  std::vector<int> divisions(segment_count, 1);
+  for (int remaining = piece_num - segment_count; remaining > 0; --remaining)
+  {
+    int best = 0;
+    double best_length = -1.0;
+    for (int segment_id = 0; segment_id < segment_count; ++segment_id)
+    {
+      const double divided_length =
+          (simplified[segment_id + 1] - simplified[segment_id]).norm() /
+          static_cast<double>(divisions[segment_id]);
+      if (divided_length > best_length)
+      {
+        best_length = divided_length;
+        best = segment_id;
+      }
+    }
+    ++divisions[best];
+  }
+
+  seed_path.push_back(simplified.front());
+  for (int segment_id = 0; segment_id < segment_count; ++segment_id)
+  {
+    for (int division = 1; division <= divisions[segment_id]; ++division)
+    {
+      seed_path.push_back(
+          simplified[segment_id] +
+          (simplified[segment_id + 1] - simplified[segment_id]) *
+              static_cast<double>(division) /
+              static_cast<double>(divisions[segment_id]));
+    }
+  }
+  return static_cast<int>(seed_path.size()) == piece_num + 1;
+}
+}
+
 namespace ego_planner
 {
   /* main planning API */
@@ -32,6 +141,9 @@ namespace ego_planner
     bool tf_sfc_generated = false;
     bool fallback_to_ego = false;
     bool projection_applied = false;
+    const std::string requested_corridor_method = tf_sfc_parameters_.enabled
+                                                      ? tf_sfc_parameters_.corridor_method
+                                                      : "ego";
     double optimizer_time_ms = 0.0;
     double tf_sfc_generation_ms = 0.0;
     int total_lbfgs_iterations = 0;
@@ -51,10 +163,52 @@ namespace ego_planner
     {
       // TF-SFC is frozen during one optimization request. The explicit fallback
       // switch controls both generation failures and later EGO rebound retries.
-      jerkOpt_.generate(guidedInnerPts, initT);
       const ros::WallTime corridor_started = ros::WallTime::now();
-      const bool corridor_ok = tf_sfc_manager_->generate(jerkOpt_.getTraj(), tf_corridors_);
+      bool corridor_ok = false;
+      if (requested_corridor_method == "ellipsoid_decomp")
+      {
+        tf_sfc::PointVector seed_path;
+        if (!tf_sfc_manager_->ellipsoidDecompAvailable())
+        {
+          tf_sfc::Corridor failed;
+          failed.metrics.piece_id = 0;
+          failed.metrics.failure_reason = tf_sfc::FailureReason::DECOMP_UTIL_UNAVAILABLE;
+          tf_corridors_.push_back(failed);
+        }
+        else if (!buildFixedPieceSeedPath(grid_map_, a_star_, iniState.col(0),
+                                          finState.col(0), piece_num_, seed_path))
+        {
+          tf_sfc::Corridor failed;
+          failed.metrics.piece_id = 0;
+          failed.metrics.failure_reason = tf_sfc::FailureReason::SEED_PATH_FAILURE;
+          tf_corridors_.push_back(failed);
+        }
+        else
+        {
+          for (int point_id = 1; point_id < piece_num_; ++point_id)
+          {
+            guidedInnerPts.col(point_id - 1) = seed_path[point_id];
+          }
+          corridor_ok = tf_sfc_manager_->generateEllipsoidDecomp(seed_path,
+                                                                  tf_corridors_);
+        }
+      }
+      else if (requested_corridor_method == "obb")
+      {
+        jerkOpt_.generate(guidedInnerPts, initT);
+        corridor_ok = tf_sfc_manager_->generate(jerkOpt_.getTraj(), tf_corridors_);
+      }
+      else
+      {
+        tf_sfc::Corridor failed;
+        failed.metrics.piece_id = 0;
+        failed.metrics.failure_reason = tf_sfc::FailureReason::INVALID_INPUT;
+        tf_corridors_.push_back(failed);
+      }
       tf_sfc_generation_ms = (ros::WallTime::now() - corridor_started).toSec() * 1000.0;
+      // Keep a valid trajectory object for diagnostics even when corridor
+      // generation is rejected before the optimizer starts.
+      jerkOpt_.generate(guidedInnerPts, initT);
       logged_corridors = tf_corridors_;
       publishTfSfcCorridors(logged_corridors);
       if (corridor_ok)
@@ -82,10 +236,14 @@ namespace ego_planner
                                       ? tf_sfc_experiment_logger_->experimentTag()
                                       : tf_sfc_parameters_.experiment_tag;
           record.status = "tf_sfc_generation_failure";
+          record.requested_method = requested_corridor_method;
+          record.method = requested_corridor_method;
           record.timestamp_s = t0.toSec();
           record.drone_id = drone_id_;
           record.tf_sfc_enabled = true;
-          record.direction_mode = static_cast<int>(tf_sfc_parameters_.direction_mode);
+          record.direction_mode = requested_corridor_method == "obb"
+                                      ? static_cast<int>(tf_sfc_parameters_.direction_mode)
+                                      : -1;
           record.total_planning_ms = (ros::Time::now() - t0).toSec() * 1000.0;
           record.corridor_generation_ms = tf_sfc_generation_ms;
           record.piece_count = piece_num_;
@@ -242,9 +400,13 @@ namespace ego_planner
                       (last_lbfgs_result == lbfgs::LBFGSERR_CANCELED ? "rebound_limit" :
                        (flag_still_unsafe ? "collision_or_clearance_failure" : "solver_failure"));
       record.timestamp_s = t0.toSec();
+      record.requested_method = requested_corridor_method;
+      record.method = fallback_to_ego ? "ego" : requested_corridor_method;
       record.drone_id = drone_id_;
       record.tf_sfc_enabled = tf_sfc_parameters_.enabled;
-      record.direction_mode = static_cast<int>(tf_sfc_parameters_.direction_mode);
+      record.direction_mode = requested_corridor_method == "obb"
+                                  ? static_cast<int>(tf_sfc_parameters_.direction_mode)
+                                  : -1;
       record.success = flag_success;
       record.collision_free = flag_success;
       record.tf_sfc_generated = tf_sfc_generated;
@@ -1910,6 +2072,8 @@ namespace ego_planner
                           "/tmp/tf_sfc_results/ego");
     nh.param<std::string>("tf_sfc/experiment_tag", tf_sfc_parameters_.experiment_tag,
                           "default");
+    nh.param<std::string>("tf_sfc/corridor_method", tf_sfc_parameters_.corridor_method,
+                          "obb");
     nh.param("tf_sfc/max_faces", tf_sfc_parameters_.max_faces, 12);
     nh.param("tf_sfc/samples_per_piece", tf_sfc_parameters_.samples_per_piece, 8);
     nh.param("tf_sfc/projection_passes", tf_sfc_parameters_.projection_passes, 4);
@@ -1920,6 +2084,12 @@ namespace ego_planner
     nh.param("tf_sfc/inflation_step", tf_sfc_parameters_.inflation_step, 0.10);
     nh.param("tf_sfc/weight", tf_sfc_parameters_.weight, 1000.0);
     nh.param("tf_sfc/penalty_epsilon", tf_sfc_parameters_.penalty_epsilon, 0.02);
+    nh.param("tf_sfc/decomp_local_bbox_forward",
+             tf_sfc_parameters_.decomp_local_bbox_forward, 0.5);
+    nh.param("tf_sfc/decomp_local_bbox_lateral",
+             tf_sfc_parameters_.decomp_local_bbox_lateral, 1.0);
+    nh.param("tf_sfc/decomp_local_bbox_vertical",
+             tf_sfc_parameters_.decomp_local_bbox_vertical, 1.0);
 
     int direction_mode = static_cast<int>(tf_sfc::DirectionMode::PCA);
     nh.param("tf_sfc/direction_mode", direction_mode,
@@ -1946,6 +2116,18 @@ namespace ego_planner
     tf_sfc_parameters_.inflation_step = std::max(tf_sfc_parameters_.inflation_step, 1.0e-3);
     tf_sfc_parameters_.weight = std::max(tf_sfc_parameters_.weight, 0.0);
     tf_sfc_parameters_.penalty_epsilon = std::max(tf_sfc_parameters_.penalty_epsilon, 0.0);
+    tf_sfc_parameters_.decomp_local_bbox_forward =
+        std::max(tf_sfc_parameters_.decomp_local_bbox_forward, 1.0e-3);
+    tf_sfc_parameters_.decomp_local_bbox_lateral =
+        std::max(tf_sfc_parameters_.decomp_local_bbox_lateral, 1.0e-3);
+    tf_sfc_parameters_.decomp_local_bbox_vertical =
+        std::max(tf_sfc_parameters_.decomp_local_bbox_vertical, 1.0e-3);
+    if (tf_sfc_parameters_.corridor_method != "obb" &&
+        tf_sfc_parameters_.corridor_method != "ellipsoid_decomp")
+    {
+      ROS_ERROR("Invalid tf_sfc/corridor_method='%s'; corridor generation will be rejected.",
+                tf_sfc_parameters_.corridor_method.c_str());
+    }
     tf_sfc_experiment_logger_.reset(new tf_sfc::ExperimentLogger(
         tf_sfc_parameters_.log_enabled,
         tf_sfc_parameters_.log_directory,

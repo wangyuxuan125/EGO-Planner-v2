@@ -27,10 +27,11 @@
     <!-- topic of your odometry such as VIO or LIO -->
     <arg name="odom_topic"/>
     <arg name="tf_sfc_enabled" default="false"/>
+    <arg name="tf_sfc_corridor_method" default="obb"/>
     <arg name="tf_sfc_use_projection" default="false"/>
-    <arg name="tf_sfc_use_soft_penalty" default="false"/>
-    <arg name="tf_sfc_allow_partial_corridors" default="true"/>
-    <arg name="tf_sfc_allow_ego_fallback" default="true"/>
+    <arg name="tf_sfc_use_soft_penalty" default="true"/>
+    <arg name="tf_sfc_allow_partial_corridors" default="false"/>
+    <arg name="tf_sfc_allow_ego_fallback" default="false"/>
     <arg name="tf_sfc_visualization_enabled" default="true"/>
     <arg name="tf_sfc_visualization_frame" default="world"/>
     <arg name="tf_sfc_min_valid_pieces" default="1"/>
@@ -40,6 +41,9 @@
     <arg name="tf_sfc_log_enabled" default="true"/>
     <arg name="tf_sfc_log_directory" default="$(env HOME)/tf_sfc_results/ego"/>
     <arg name="tf_sfc_experiment_tag" default="default"/>
+    <arg name="tf_sfc_decomp_local_bbox_forward" default="0.5"/>
+    <arg name="tf_sfc_decomp_local_bbox_lateral" default="1.0"/>
+    <arg name="tf_sfc_decomp_local_bbox_vertical" default="1.0"/>
     <!-- main algorithm params -->
     <include file="$(find ego_planner)/launch/include/advanced_param.xml">
         <arg name="drone_id" value="$(arg drone_id)"/>
@@ -68,6 +72,7 @@
         <arg name="planning_horizon" value="7.5" />
         <arg name="use_multitopology_trajs" value="false" />
         <arg name="tf_sfc_enabled" value="$(arg tf_sfc_enabled)"/>
+        <arg name="tf_sfc_corridor_method" value="$(arg tf_sfc_corridor_method)"/>
         <arg name="tf_sfc_use_projection" value="$(arg tf_sfc_use_projection)"/>
         <arg name="tf_sfc_use_soft_penalty" value="$(arg tf_sfc_use_soft_penalty)"/>
         <arg name="tf_sfc_allow_partial_corridors" value="$(arg tf_sfc_allow_partial_corridors)"/>
@@ -81,6 +86,9 @@
         <arg name="tf_sfc_log_enabled" value="$(arg tf_sfc_log_enabled)"/>
         <arg name="tf_sfc_log_directory" value="$(arg tf_sfc_log_directory)"/>
         <arg name="tf_sfc_experiment_tag" value="$(arg tf_sfc_experiment_tag)"/>
+        <arg name="tf_sfc_decomp_local_bbox_forward" value="$(arg tf_sfc_decomp_local_bbox_forward)"/>
+        <arg name="tf_sfc_decomp_local_bbox_lateral" value="$(arg tf_sfc_decomp_local_bbox_lateral)"/>
+        <arg name="tf_sfc_decomp_local_bbox_vertical" value="$(arg tf_sfc_decomp_local_bbox_vertical)"/>
         <!-- 1: use 2D Nav Goal to select goal  -->
         <!-- 2: use global waypoints below  -->
         <arg name="flight_type" value="$(arg flight_type)" />

@@ -50,7 +50,10 @@ enum class FailureReason
   OUTSIDE_LOCAL_MAP = 3,
   INITIAL_OBB_OCCUPIED = 4,
   OVERLAP_TOO_SMALL = 5,
-  SKIPPED_AFTER_FAILURE = 6
+  SKIPPED_AFTER_FAILURE = 6,
+  SEED_PATH_FAILURE = 7,
+  DECOMP_UTIL_UNAVAILABLE = 8,
+  DECOMP_FAILURE = 9
 };
 
 inline const char *failureReasonName(const FailureReason reason)
@@ -64,6 +67,9 @@ inline const char *failureReasonName(const FailureReason reason)
   case FailureReason::INITIAL_OBB_OCCUPIED: return "initial_obb_occupied";
   case FailureReason::OVERLAP_TOO_SMALL: return "overlap_too_small";
   case FailureReason::SKIPPED_AFTER_FAILURE: return "skipped_after_failure";
+  case FailureReason::SEED_PATH_FAILURE: return "seed_path_failure";
+  case FailureReason::DECOMP_UTIL_UNAVAILABLE: return "decomp_util_unavailable";
+  case FailureReason::DECOMP_FAILURE: return "decomp_failure";
   }
   return "unknown";
 }
@@ -80,6 +86,8 @@ struct Parameters
   std::string visualization_frame = "world";
   std::string log_directory = "/tmp/tf_sfc_results/ego";
   std::string experiment_tag = "default";
+  // obb: TF-SFC MVP; ellipsoid_decomp: Liu et al. / DecompUtil baseline.
+  std::string corridor_method = "obb";
   DirectionMode direction_mode = DirectionMode::PCA;
   int max_faces = 12;
   int samples_per_piece = 8;
@@ -91,6 +99,9 @@ struct Parameters
   double inflation_step = 0.10;
   double weight = 1000.0;
   double penalty_epsilon = 0.02;
+  double decomp_local_bbox_forward = 0.5;
+  double decomp_local_bbox_lateral = 1.0;
+  double decomp_local_bbox_vertical = 1.0;
 };
 
 struct DirectionSet

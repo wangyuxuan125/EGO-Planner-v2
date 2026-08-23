@@ -1,6 +1,6 @@
 # TF-SFC 实验编译、运行与数据记录指南
 
-本文档对应 `feat/tf-sfc-mvp` 分支。当前 TF-SFC 是保守的六面 OBB MVP；功能默认关闭。启用后，单机实验启动文件默认采用严格模式，生成或认证失败会记为失败而不会伪装成 EGO 成功；工程运行仍可显式开启回退。
+本文档对应 `feat/tf-sfc-mvp` 分支。当前包含保守六面 OBB MVP 和 Liu et al. (ICRA 2017) / DecompUtil 两种走廊生成器；功能默认关闭。启用后，单机实验启动文件默认采用严格模式，生成或认证失败会记为失败而不会伪装成 EGO 成功；工程运行仍可显式开启回退。
 
 ## 1. 环境与编译
 
@@ -21,7 +21,7 @@ source devel/setup.bash
 
 ### 1.1 可选：安装 DecompROS 走廊可视化
 
-DecompROS 只用于 ROS 消息与 RViz 显示，TF-SFC 主程序在没有它时仍可编译。为避免把 `catkin_make` 和 DecompROS 推荐的 `catkin build` 混在同一构建目录，建议建立独立工作空间：
+DecompROS 提供 ROS 消息与 RViz 显示，其递归子模块 DecompUtil 提供 Liu 算法。为避免把 `catkin_make` 和 DecompROS 推荐的 `catkin build` 混在同一构建目录，建议建立独立工作空间：
 
 ```bash
 sudo apt install python3-catkin-tools ros-noetic-catkin-simple
@@ -49,7 +49,7 @@ source $HOME/decomp_ws/devel/setup.bash
 source /你的路径/EGO-Planner-v2/swarm-playground/main_ws/devel/setup.bash
 ```
 
-编译输出出现 `traj_opt: DecompROS corridor visualization enabled` 表示可视化已接入；若显示 `decomp_ros_msgs not found`，EGO 仍会正常编译，但不会发布 DecompROS 消息。
+编译输出出现 `traj_opt: DecompROS corridor visualization enabled` 表示可视化已接入；出现 `traj_opt: Liu/DecompUtil corridor baseline enabled` 表示 Liu 基线可运行。两项是独立能力：只有消息依赖时可显示 OBB，但不能将其称为 Liu 方法。
 
 ## 2. 单机仿真与对比命令
 
@@ -72,8 +72,9 @@ roslaunch ego_planner single_drone_interactive.launch \
 roslaunch ego_planner single_drone_interactive.launch \
   map_seed:=42 \
   tf_sfc_enabled:=true \
+  tf_sfc_corridor_method:=obb \
   tf_sfc_direction_mode:=1 \
-  tf_sfc_allow_partial_corridors:=true \
+  tf_sfc_allow_partial_corridors:=false \
   tf_sfc_allow_ego_fallback:=false \
   tf_sfc_min_valid_pieces:=1 \
   tf_sfc_safety_margin:=0.10 \
@@ -89,8 +90,9 @@ roslaunch ego_planner single_drone_interactive.launch \
 roslaunch ego_planner single_drone_interactive.launch \
   map_seed:=42 \
   tf_sfc_enabled:=true \
+  tf_sfc_corridor_method:=obb \
   tf_sfc_direction_mode:=0 \
-  tf_sfc_allow_partial_corridors:=true \
+  tf_sfc_allow_partial_corridors:=false \
   tf_sfc_allow_ego_fallback:=false \
   tf_sfc_use_projection:=false \
   tf_sfc_use_soft_penalty:=true \
@@ -98,6 +100,25 @@ roslaunch ego_planner single_drone_interactive.launch \
 ```
 
 方向模式为 `0=Frenet`、`1=PCA`、`2=Sensitivity Gramian`。当前 MVP 尚未从 MINCO 自动构造 Gramian；模式 2 没有外部有效 Gramian 时会回退到 PCA，并在 CSV 中记录 `direction_fallback_count`。因此当前不能把模式 2 的回退结果作为完整灵敏度方法结果。
+
+### EGO + Liu et al. EllipsoidDecomp SFC
+
+```bash
+roslaunch ego_planner single_drone_interactive.launch \
+  map_seed:=42 \
+  tf_sfc_enabled:=true \
+  tf_sfc_corridor_method:=ellipsoid_decomp \
+  tf_sfc_allow_partial_corridors:=false \
+  tf_sfc_allow_ego_fallback:=false \
+  tf_sfc_use_projection:=false \
+  tf_sfc_use_soft_penalty:=true \
+  tf_sfc_decomp_local_bbox_forward:=0.5 \
+  tf_sfc_decomp_local_bbox_lateral:=1.0 \
+  tf_sfc_decomp_local_bbox_vertical:=1.0 \
+  tf_sfc_experiment_tag:=liu_ellipsoid_decomp
+```
+
+该分支先调用 EGO 已有 A* 生成无碰撞骨架，做视线简化后细分为与 MINCO piece 数一致的折线，再调用 `EllipsoidDecomp3D::dilate`。因此走廊逐段进入同一套软约束；A*、简化和分解耗时都计入 `corridor_generation_ms` 与 `total_planning_ms`。若 DecompUtil 未被发现，会以 `decomp_util_unavailable` 失败，不会静默退化为 OBB 或 EGO。
 
 `single_drone_interactive.launch` 对 EGO 回退默认采用严格模式（`tf_sfc_allow_ego_fallback=false`）；只有明确进行工程可用性测试时才建议手动开启回退。
 
@@ -135,20 +156,20 @@ rostopic echo -n 1 /drone_0_ego_planner_node/tf_sfc/polyhedron_array
 默认输出：
 
 ```text
-$HOME/tf_sfc_results/ego/ego_runs_v2_drone_0.csv
-$HOME/tf_sfc_results/ego/ego_corridors_v2_drone_0.csv
+$HOME/tf_sfc_results/ego/ego_runs_v3_drone_0.csv
+$HOME/tf_sfc_results/ego/ego_corridors_v3_drone_0.csv
 ```
 
-- `ego_runs_v2_drone_<id>.csv`：每次优化调用一行，包含实验标签、状态、成功/无碰撞标志、规划与优化耗时、LBFGS 迭代、有效/失败分段数、首个失败原因、最终代价、轨迹时长和采样近似轨迹长度。
-- `ego_corridors_v2_drone_<id>.csv`：每个轨迹分段一行；有效段记录面数、生成时间、加权方向宽度、样本余量和相邻重叠半径，无效段记录 `outside_local_map`、`initial_obb_occupied`、`overlap_too_small` 等原因。
+- `ego_runs_v3_drone_<id>.csv`：每次优化调用一行，新增 `requested_method` 与 `method`，并包含状态、成功/无碰撞标志、规划与优化耗时、LBFGS 迭代、有效/失败分段数、首个失败原因、最终代价、轨迹时长和采样近似轨迹长度。
+- `ego_corridors_v3_drone_<id>.csv`：每个轨迹分段一行；有效段记录方法、面数、生成时间、宽度代理、样本余量和相邻重叠半径，无效段记录 `outside_local_map`、`initial_obb_occupied`、`seed_path_failure`、`decomp_failure`、`overlap_too_small` 等原因。
 
 文件使用追加模式。不要在同一标签下混入不同地图或参数；建议每个场景使用独立目录或唯一 `tf_sfc_experiment_tag`。
 
 快速查看：
 
 ```bash
-head -n 5 $HOME/tf_sfc_results/ego/ego_runs_v2_drone_0.csv
-head -n 5 $HOME/tf_sfc_results/ego/ego_corridors_v2_drone_0.csv
+head -n 5 $HOME/tf_sfc_results/ego/ego_runs_v3_drone_0.csv
+head -n 5 $HOME/tf_sfc_results/ego/ego_corridors_v3_drone_0.csv
 ```
 
 ## 4. 当前可用于论文统计的字段
@@ -162,7 +183,7 @@ head -n 5 $HOME/tf_sfc_results/ego/ego_corridors_v2_drone_0.csv
 下面的命令只使用 Python 标准库：
 
 ```bash
-python3 - $HOME/tf_sfc_results/ego/ego_runs_v2_drone_0.csv <<'PY'
+python3 - $HOME/tf_sfc_results/ego/ego_runs_v3_drone_0.csv <<'PY'
 import csv, math, statistics, sys
 
 rows = list(csv.DictReader(open(sys.argv[1], newline='')))
@@ -198,4 +219,4 @@ PY
 
 建议将方法命名为 `EGO + EllipsoidDecomp SFC (Liu et al., ICRA 2017)`，并与 `EGO original`、`EGO + PCA OBB-SFC` 分开。所有方法必须使用相同地图 seed、起终点、局部地图范围、障碍膨胀、动力学限制和失败计数规则。若 EllipsoidDecomp 使用预先无碰撞路径，而 OBB 使用未优化初始轨迹，需要把路径搜索/预处理耗时纳入总规划时间，或为所有方法提供相同的无碰撞参考路径，否则比较不公平。
 
-当前提交只加入 DecompROS 可视化，不应把它标记为 Liu et al. 算法结果。EllipsoidDecomp 生成器接入应作为独立方法开关和下一阶段实现。
+本分支现在已通过 `tf_sfc_corridor_method:=ellipsoid_decomp` 实际调用 DecompUtil，并用 A* 无碰撞骨架驱动同一套 EGO 优化器。论文中应将它标记为独立基线，不与 DecompROS 可视化或 OBB-SFC 混称。
