@@ -20,6 +20,17 @@ find_package(catkin REQUIRED COMPONENTS
   path_searching
 )
 
+# DecompROS is optional: the planner still builds and logs TF-SFC metrics when
+# it is absent. When decomp_ros_msgs is sourced, publish PolyhedronArray data
+# for the DecompROS RViz plugin.
+find_package(decomp_ros_msgs QUIET)
+if(decomp_ros_msgs_FOUND)
+  add_definitions(-DTF_SFC_WITH_DECOMP_ROS)
+  message(STATUS "traj_opt: DecompROS corridor visualization enabled")
+else()
+  message(STATUS "traj_opt: decomp_ros_msgs not found; corridor visualization disabled")
+endif()
+
 catkin_package(
  INCLUDE_DIRS include
  LIBRARIES traj_opt
@@ -31,6 +42,7 @@ include_directories(
     SYSTEM 
     include 
     ${catkin_INCLUDE_DIRS}
+    ${decomp_ros_msgs_INCLUDE_DIRS}
     ${Eigen3_INCLUDE_DIRS} 
     ${PCL_INCLUDE_DIRS}
 )
@@ -45,3 +57,7 @@ add_library( traj_opt
 target_link_libraries( traj_opt
     ${catkin_LIBRARIES} 
     )  
+
+if(decomp_ros_msgs_FOUND)
+  add_dependencies(traj_opt ${decomp_ros_msgs_EXPORTED_TARGETS})
+endif()

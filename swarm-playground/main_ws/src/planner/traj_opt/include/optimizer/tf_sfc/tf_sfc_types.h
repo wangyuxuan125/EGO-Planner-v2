@@ -14,6 +14,27 @@ namespace tf_sfc
 
 typedef Eigen::Matrix<double, Eigen::Dynamic, 4> HPoly;
 
+// Converts n.dot(x) <= b into the point/outer-normal plane representation
+// expected by decomp_ros_msgs/Polyhedron.
+inline bool hpolyFaceToPointNormal(const HPoly &hpoly,
+                                   const int face_id,
+                                   Eigen::Vector3d &point,
+                                   Eigen::Vector3d &normal)
+{
+  if (face_id < 0 || face_id >= hpoly.rows())
+  {
+    return false;
+  }
+  normal = hpoly.row(face_id).head<3>().transpose();
+  const double squared_norm = normal.squaredNorm();
+  if (squared_norm <= 1.0e-12)
+  {
+    return false;
+  }
+  point = normal * hpoly(face_id, 3) / squared_norm;
+  return true;
+}
+
 enum class DirectionMode
 {
   FRENET = 0,
@@ -54,7 +75,9 @@ struct Parameters
   bool use_soft_penalty = false;
   bool allow_partial_corridors = true;
   bool allow_ego_fallback = true;
+  bool visualization_enabled = true;
   bool log_enabled = true;
+  std::string visualization_frame = "world";
   std::string log_directory = "/tmp/tf_sfc_results/ego";
   std::string experiment_tag = "default";
   DirectionMode direction_mode = DirectionMode::PCA;

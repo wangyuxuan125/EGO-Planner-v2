@@ -77,6 +77,7 @@ namespace ego_planner
     std::shared_ptr<tf_sfc::TfSfcManager> tf_sfc_manager_;
     std::unique_ptr<tf_sfc::ExperimentLogger> tf_sfc_experiment_logger_;
     tf_sfc::CorridorVector tf_corridors_;
+    ros::Publisher tf_sfc_polyhedron_pub_;
     // PtsChk_t pts_check_;
 
     int drone_id_;
@@ -109,6 +110,8 @@ namespace ego_planner
     double max_vel_, max_acc_, max_jer_;                          // dynamic limits
 
     double t_now_;
+
+    void publishTfSfcCorridors(const tf_sfc::CorridorVector &corridors);
 
   public:
     PolyTrajOptimizer() {}

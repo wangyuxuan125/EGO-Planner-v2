@@ -31,6 +31,8 @@
     <arg name="tf_sfc_use_soft_penalty" default="false"/>
     <arg name="tf_sfc_allow_partial_corridors" default="true"/>
     <arg name="tf_sfc_allow_ego_fallback" default="true"/>
+    <arg name="tf_sfc_visualization_enabled" default="true"/>
+    <arg name="tf_sfc_visualization_frame" default="world"/>
     <arg name="tf_sfc_min_valid_pieces" default="1"/>
     <arg name="tf_sfc_safety_margin" default="0.10"/>
     <arg name="tf_sfc_min_overlap_radius" default="0.08"/>
@@ -70,6 +72,8 @@
         <arg name="tf_sfc_use_soft_penalty" value="$(arg tf_sfc_use_soft_penalty)"/>
         <arg name="tf_sfc_allow_partial_corridors" value="$(arg tf_sfc_allow_partial_corridors)"/>
         <arg name="tf_sfc_allow_ego_fallback" value="$(arg tf_sfc_allow_ego_fallback)"/>
+        <arg name="tf_sfc_visualization_enabled" value="$(arg tf_sfc_visualization_enabled)"/>
+        <arg name="tf_sfc_visualization_frame" value="$(arg tf_sfc_visualization_frame)"/>
         <arg name="tf_sfc_min_valid_pieces" value="$(arg tf_sfc_min_valid_pieces)"/>
         <arg name="tf_sfc_safety_margin" value="$(arg tf_sfc_safety_margin)"/>
         <arg name="tf_sfc_min_overlap_radius" value="$(arg tf_sfc_min_overlap_radius)"/>

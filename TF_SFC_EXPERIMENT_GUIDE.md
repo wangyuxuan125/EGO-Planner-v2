@@ -19,6 +19,38 @@ cd /你的路径/EGO-Planner-v2/swarm-playground/main_ws
 source devel/setup.bash
 ```
 
+### 1.1 可选：安装 DecompROS 走廊可视化
+
+DecompROS 只用于 ROS 消息与 RViz 显示，TF-SFC 主程序在没有它时仍可编译。为避免把 `catkin_make` 和 DecompROS 推荐的 `catkin build` 混在同一构建目录，建议建立独立工作空间：
+
+```bash
+sudo apt install python3-catkin-tools ros-noetic-catkin-simple
+
+mkdir -p $HOME/decomp_ws/src
+cd $HOME/decomp_ws/src
+git clone --recursive https://github.com/sikang/DecompROS.git
+cd DecompROS
+git submodule update --init --recursive
+
+cd $HOME/decomp_ws
+catkin config --cmake-args -DCMAKE_BUILD_TYPE=Release
+catkin build
+source devel/setup.bash
+
+cd /你的路径/EGO-Planner-v2/swarm-playground/main_ws
+catkin_make -DCMAKE_BUILD_TYPE=Release
+source devel/setup.bash
+```
+
+以后新开终端时必须先 source DecompROS，再 source EGO：
+
+```bash
+source $HOME/decomp_ws/devel/setup.bash
+source /你的路径/EGO-Planner-v2/swarm-playground/main_ws/devel/setup.bash
+```
+
+编译输出出现 `traj_opt: DecompROS corridor visualization enabled` 表示可视化已接入；若显示 `decomp_ros_msgs not found`，EGO 仍会正常编译，但不会发布 DecompROS 消息。
+
 ## 2. 单机仿真与对比命令
 
 所有命令均在 `swarm-playground/main_ws` 下运行。默认把 CSV 保存到 `$HOME/tf_sfc_results/ego`。
@@ -82,6 +114,22 @@ roslaunch ego_planner single_drone_interactive.launch \
 
 启动后，在 RViz 中使用 `2D Nav Goal` 设置目标。为了公平比较，方法之间应保持地图 seed、起终点、速度/加速度限制和重复次数一致。
 
+### RViz 走廊显示
+
+`local_map_off.rviz` 已加入 `TF-SFC Corridors` 显示项，默认订阅：
+
+```text
+/drone_0_ego_planner_node/tf_sfc/polyhedron_array
+```
+
+也可以先确认消息是否存在：
+
+```bash
+rostopic echo -n 1 /drone_0_ego_planner_node/tf_sfc/polyhedron_array
+```
+
+发布器只发送 `valid=1` 的走廊。若消息中的 `polyhedrons` 为空，应先查看 CSV 的 `corridor_count` 和 `first_failure_reason`；这表示本次没有有效走廊，并非一定是 RViz 设置错误。
+
 ## 3. 输出文件
 
 默认输出：
@@ -140,3 +188,14 @@ PY
 4. 保留原始 CSV，只在副本上清洗或聚合数据。
 5. 正式 TF-SFC 实验使用 `tf_sfc_allow_ego_fallback:=false`；`fallback_to_ego=1` 的工程运行样本不能算作 TF-SFC 成功样本。
 6. `allow_partial_corridors=true` 表示只约束从当前状态开始、位于已知局部地图内的连续有效前缀；末端未知空间不会导致前面已认证走廊全部丢失。
+
+## 7. 将 Liu et al. ICRA 2017 作为对比方法
+
+可行，但必须区分两个组件：
+
+- `DecompROS` 是消息、转换工具和 RViz 插件；把现有 OBB 发布成 `PolyhedronArray` 只属于可视化，不能记作 Liu et al. 方法。
+- 论文对比基线必须实际调用 DecompUtil 的 `EllipsoidDecomp3D::dilate(path)`，使用它生成的多面体约束驱动同一套轨迹优化器，并单独记录走廊生成耗时与成功率。
+
+建议将方法命名为 `EGO + EllipsoidDecomp SFC (Liu et al., ICRA 2017)`，并与 `EGO original`、`EGO + PCA OBB-SFC` 分开。所有方法必须使用相同地图 seed、起终点、局部地图范围、障碍膨胀、动力学限制和失败计数规则。若 EllipsoidDecomp 使用预先无碰撞路径，而 OBB 使用未优化初始轨迹，需要把路径搜索/预处理耗时纳入总规划时间，或为所有方法提供相同的无碰撞参考路径，否则比较不公平。
+
+当前提交只加入 DecompROS 可视化，不应把它标记为 Liu et al. 算法结果。EllipsoidDecomp 生成器接入应作为独立方法开关和下一阶段实现。

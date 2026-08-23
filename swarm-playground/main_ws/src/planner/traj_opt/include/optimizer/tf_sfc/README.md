@@ -23,6 +23,9 @@ EGO-Planner-v2's original rebound, restart, swarm, and final collision-check pat
 - Configurable EGO fallback. Operational launches may allow fallback; strict
   experiments can reject generation failures instead of silently counting an
   original-EGO result as TF-SFC success.
+- Optional DecompROS `PolyhedronArray` publication. When `decomp_ros_msgs` is
+  available at build time, every valid corridor is converted from `n.dot(x) <= b`
+  to the point/outer-normal representation used by the DecompROS RViz plugin.
 
 This is an integration and OBB-baseline milestone, not the paper's full TF-SFC
 method. In particular, obstacle cutting planes, face pruning, overlap refinement,
@@ -41,6 +44,8 @@ The launch files expose the following private ROS parameters:
 | `tf_sfc/use_soft_penalty` | Add the frozen corridor hinge-squared penalty. |
 | `tf_sfc/allow_partial_corridors` | Use a continuous certified prefix in the known local map. |
 | `tf_sfc/allow_ego_fallback` | Allow operational fallback; set false for strict method evaluation. |
+| `tf_sfc/visualization_enabled` | Publish valid corridor candidates for the DecompROS RViz plugin. |
+| `tf_sfc/visualization_frame` | Frame ID used by the corridor message; defaults to `world`. |
 | `tf_sfc/min_valid_pieces` | Minimum certified prefix length required to enable TF-SFC. |
 | `tf_sfc/max_faces` | Face budget; the MVP needs at least 6 and produces 6. |
 | `tf_sfc/samples_per_piece` | Samples used for the trajectory envelope. |
@@ -55,6 +60,11 @@ For a first simulation ablation, enable PCA corridors and the soft penalty while
 leaving projection disabled. Projection is expected to do little when a corridor
 is generated from the same initial trajectory; the frozen penalty is the component
 that changes the subsequent optimization feasible region.
+
+The visualization topic is private to the planner node:
+`/drone_<id>_ego_planner_node/tf_sfc/polyhedron_array`. An empty array means the
+latest request did not produce a valid corridor; it is not necessarily an RViz
+plugin error.
 
 ## Recommended next implementation step
 

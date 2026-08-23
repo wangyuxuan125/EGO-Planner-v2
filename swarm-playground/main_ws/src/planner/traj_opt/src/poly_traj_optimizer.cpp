@@ -1,5 +1,9 @@
 #include "optimizer/poly_traj_optimizer.h"
 
+#ifdef TF_SFC_WITH_DECOMP_ROS
+#include <decomp_ros_msgs/PolyhedronArray.h>
+#endif
+
 using namespace std;
 
 #define VERBOSE_OUTPUT false
@@ -52,6 +56,7 @@ namespace ego_planner
       const bool corridor_ok = tf_sfc_manager_->generate(jerkOpt_.getTraj(), tf_corridors_);
       tf_sfc_generation_ms = (ros::WallTime::now() - corridor_started).toSec() * 1000.0;
       logged_corridors = tf_corridors_;
+      publishTfSfcCorridors(logged_corridors);
       if (corridor_ok)
       {
         tf_sfc_generated = true;
@@ -1824,6 +1829,58 @@ namespace ego_planner
   }
 
   /* helper functions */
+  void PolyTrajOptimizer::publishTfSfcCorridors(
+      const tf_sfc::CorridorVector &corridors)
+  {
+#ifdef TF_SFC_WITH_DECOMP_ROS
+    if (!tf_sfc_parameters_.visualization_enabled ||
+        tf_sfc_polyhedron_pub_.getTopic().empty())
+    {
+      return;
+    }
+
+    decomp_ros_msgs::PolyhedronArray message;
+    message.header.stamp = ros::Time::now();
+    message.header.frame_id = tf_sfc_parameters_.visualization_frame;
+    for (const tf_sfc::Corridor &corridor : corridors)
+    {
+      if (!corridor.metrics.valid || corridor.hpoly.rows() == 0)
+      {
+        continue;
+      }
+
+      decomp_ros_msgs::Polyhedron polyhedron;
+      for (int face_id = 0; face_id < corridor.hpoly.rows(); ++face_id)
+      {
+        Eigen::Vector3d point;
+        Eigen::Vector3d normal;
+        if (!tf_sfc::hpolyFaceToPointNormal(
+                corridor.hpoly, face_id, point, normal))
+        {
+          continue;
+        }
+        geometry_msgs::Point point_message;
+        point_message.x = point.x();
+        point_message.y = point.y();
+        point_message.z = point.z();
+        geometry_msgs::Point normal_message;
+        normal_message.x = normal.x();
+        normal_message.y = normal.y();
+        normal_message.z = normal.z();
+        polyhedron.points.push_back(point_message);
+        polyhedron.normals.push_back(normal_message);
+      }
+      if (!polyhedron.points.empty())
+      {
+        message.polyhedrons.push_back(polyhedron);
+      }
+    }
+    tf_sfc_polyhedron_pub_.publish(message);
+#else
+    (void)corridors;
+#endif
+  }
+
   void PolyTrajOptimizer::setParam(ros::NodeHandle &nh)
   {
     nh.param("optimization/constraint_points_perPiece", cps_num_prePiece_, -1);
@@ -1845,6 +1902,9 @@ namespace ego_planner
     nh.param("tf_sfc/use_soft_penalty", tf_sfc_parameters_.use_soft_penalty, false);
     nh.param("tf_sfc/allow_partial_corridors", tf_sfc_parameters_.allow_partial_corridors, true);
     nh.param("tf_sfc/allow_ego_fallback", tf_sfc_parameters_.allow_ego_fallback, true);
+    nh.param("tf_sfc/visualization_enabled", tf_sfc_parameters_.visualization_enabled, true);
+    nh.param<std::string>("tf_sfc/visualization_frame",
+                          tf_sfc_parameters_.visualization_frame, "world");
     nh.param("tf_sfc/log_enabled", tf_sfc_parameters_.log_enabled, true);
     nh.param<std::string>("tf_sfc/log_directory", tf_sfc_parameters_.log_directory,
                           "/tmp/tf_sfc_results/ego");
@@ -1890,6 +1950,19 @@ namespace ego_planner
         tf_sfc_parameters_.log_enabled,
         tf_sfc_parameters_.log_directory,
         tf_sfc_parameters_.experiment_tag));
+#ifdef TF_SFC_WITH_DECOMP_ROS
+    if (tf_sfc_parameters_.visualization_enabled)
+    {
+      tf_sfc_polyhedron_pub_ =
+          nh.advertise<decomp_ros_msgs::PolyhedronArray>(
+              "tf_sfc/polyhedron_array", 1, true);
+    }
+#else
+    if (tf_sfc_parameters_.visualization_enabled)
+    {
+      ROS_WARN("TF-SFC visualization requested, but decomp_ros_msgs was not found at build time.");
+    }
+#endif
   }
 
   void PolyTrajOptimizer::setEnvironment(const GridMap::Ptr &map)
