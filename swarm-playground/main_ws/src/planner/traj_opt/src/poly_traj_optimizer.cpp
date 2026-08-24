@@ -158,11 +158,23 @@ bool buildFixedPieceSeedPath(const GridMap::Ptr &grid_map,
     current = next;
   }
 
-  const int segment_count = static_cast<int>(simplified.size()) - 1;
+  int segment_count = static_cast<int>(simplified.size()) - 1;
   const int max_covered_piece_num = full_coverage ? piece_num : piece_num - 1;
   if (segment_count <= 0 ||
-      max_covered_piece_num < std::max(min_valid_pieces, 1) ||
-      segment_count > max_covered_piece_num)
+      max_covered_piece_num < std::max(min_valid_pieces, 1))
+  {
+    failure_reason = ego_planner::tf_sfc::FailureReason::INSUFFICIENT_PIECES;
+    return false;
+  }
+  if (!full_coverage && segment_count > max_covered_piece_num)
+  {
+    // A certified local prefix does not need to reach the rolling-map boundary.
+    // Keep the farthest line-of-sight A* bends that fit the available prefix
+    // pieces and leave the remaining route to EGO's original obstacle terms.
+    simplified.resize(max_covered_piece_num + 1);
+    segment_count = max_covered_piece_num;
+  }
+  else if (segment_count > max_covered_piece_num)
   {
     failure_reason = ego_planner::tf_sfc::FailureReason::INSUFFICIENT_PIECES;
     return false;
