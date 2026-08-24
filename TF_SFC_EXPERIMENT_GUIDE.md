@@ -110,13 +110,17 @@ roslaunch ego_planner single_drone_interactive.launch \
   tf_sfc_corridor_method:=ellipsoid_decomp \
   tf_sfc_allow_partial_corridors:=true \
   tf_sfc_allow_ego_fallback:=false \
+  tf_sfc_enforce_final_corridor:=true \
+  tf_sfc_max_enforcement_passes:=2 \
+  tf_sfc_enforcement_weight_multiplier:=10.0 \
+  tf_sfc_max_final_violation:=0.001 \
   tf_sfc_use_projection:=false \
   tf_sfc_use_soft_penalty:=true \
   tf_sfc_decomp_local_bbox_forward:=0.5 \
   tf_sfc_decomp_local_bbox_lateral:=1.0 \
   tf_sfc_decomp_local_bbox_vertical:=1.0 \
   tf_sfc_decomp_overlap_extension:=0.20 \
-  tf_sfc_experiment_tag:=liu_ellipsoid_decomp
+  tf_sfc_experiment_tag:=liu_strict_v5
 ```
 
 该分支先调用 EGO 已有 A* 生成无碰撞骨架，做视线简化后按 MINCO piece 预算细分，再逐段调用 `EllipsoidDecomp3D::dilate`。TF-SFC 的这次 A* 调用严格限制在当前膨胀局部地图内，不能把地图外未知空间当作自由空间；这一限制不改变原始 EGO 的其他 A* 调用。为提高相邻多面体在折点处的公共内域，每个分解 seed 段会沿自身切向向共享折点外延伸，延伸部分逐点检查局部地图；遇到障碍或边界时自动折半回退。延伸量由 `tf_sfc_decomp_overlap_extension` 控制并限制为当前段长度的 45% 以下。`0` 可关闭该优化，用于消融实验；它不会降低 `tf_sfc_min_overlap_radius` 的认证阈值。
@@ -124,6 +128,8 @@ roslaunch ego_planner single_drone_interactive.launch \
 EGO 使用滚动局部地图；当规划视野大于当前地图范围时，只为从当前状态开始、位于已知地图内的连续前缀生成走廊。若 A* 前缀的转折数超过可用 prefix piece 数，则保留能够放入预算的最远可视折点，而不是丢弃整个走廊序列。第一个未覆盖 piece 记录为 `outside_local_map`，其后记录为 `skipped_after_failure`。因此 `tf_sfc_allow_partial_corridors:=true` 是该局部规划器的正常严格配置；`allow_ego_fallback` 仍保持 `false`，不会把原始 EGO 结果计作走廊方法成功。A*、简化和分解耗时都计入 `corridor_generation_ms` 与 `total_planning_ms`。若 DecompUtil 未被发现，会以 `decomp_util_unavailable` 失败，不会静默退化为 OBB 或 EGO。
 
 `single_drone_interactive.launch` 对 EGO 回退默认采用严格模式（`tf_sfc_allow_ego_fallback=false`）；只有明确进行工程可用性测试时才建议手动开启回退。
+
+严格走廊终检默认开启。优化后的轨迹若在任一有效走廊 piece 上出现超过 `tf_sfc_max_final_violation` 的采样半空间越界，优化器会将走廊权重乘以 `tf_sfc_enforcement_weight_multiplier`，从当前解继续优化，最多执行 `tf_sfc_max_enforcement_passes` 次。仍不满足时该次规划记录为 `corridor_violation_failure`，即使原始 EGO 碰撞检查已经通过也不会计为 TF-SFC 成功。无走廊的 `outside_local_map`、`piece_budget_tail` 等尾段不参与该终检。
 
 ### 自定义日志目录
 
@@ -159,20 +165,20 @@ rostopic echo -n 1 /drone_0_ego_planner_node/tf_sfc/polyhedron_array
 默认输出：
 
 ```text
-$HOME/tf_sfc_results/ego/ego_runs_v4_drone_0.csv
-$HOME/tf_sfc_results/ego/ego_corridors_v4_drone_0.csv
+$HOME/tf_sfc_results/ego/ego_runs_v5_drone_0.csv
+$HOME/tf_sfc_results/ego/ego_corridors_v5_drone_0.csv
 ```
 
-- `ego_runs_v4_drone_<id>.csv`：每次优化调用一行。除状态、耗时、迭代、走廊和轨迹指标外，新增 `goal_id/replan_id/attempt_id/touch_goal`，以及走廊约束段数、优化前后走廊惩罚和最大走廊越界量。统计时应先按 `goal_id` 聚合，不能把同一目标的快速重试当成独立实验；但 `goal_id` 聚合仍只是规划器结果，最终 mission success 还需要 FSM 到达/超时/碰撞日志。
-- `ego_corridors_v4_drone_<id>.csv`：每个轨迹分段一行；有效段记录方法、面数、生成时间、宽度代理、样本余量和相邻重叠半径。A* seed 阶段会区分 `seed_start_invalid`、`seed_astar_failure`、`seed_path_outside_map`、`seed_path_occupied`；分解阶段还会记录 `outside_local_map`、`piece_budget_tail`、`decomp_failure`、`overlap_too_small` 等原因。
+- `ego_runs_v5_drone_<id>.csv`：每次优化调用一行。除 goal/replan/attempt、耗时、几何和优化前后违反量外，新增终检开关/容差、`corridor_enforcement_passes`、初始/最终走廊权重和 `strict_corridor_rejected`。统计时应先按 `goal_id` 聚合，不能把同一目标的快速重试当成独立实验；但 `goal_id` 聚合仍只是规划器结果，最终 mission success 还需要 FSM 到达/超时/碰撞日志。
+- `ego_corridors_v5_drone_<id>.csv`：每个轨迹分段一行；有效段记录方法、面数、生成时间、宽度代理、样本余量和相邻重叠半径。A* seed 阶段会区分 `seed_start_invalid`、`seed_astar_failure`、`seed_path_outside_map`、`seed_path_occupied`；分解阶段还会记录 `outside_local_map`、`piece_budget_tail`、`decomp_failure`、`overlap_too_small` 等原因。
 
 文件使用追加模式。不要在同一标签下混入不同地图或参数；建议每个场景使用独立目录或唯一 `tf_sfc_experiment_tag`。
 
 快速查看：
 
 ```bash
-head -n 5 $HOME/tf_sfc_results/ego/ego_runs_v4_drone_0.csv
-head -n 5 $HOME/tf_sfc_results/ego/ego_corridors_v4_drone_0.csv
+head -n 5 $HOME/tf_sfc_results/ego/ego_runs_v5_drone_0.csv
+head -n 5 $HOME/tf_sfc_results/ego/ego_corridors_v5_drone_0.csv
 ```
 
 ## 4. 当前可用于论文统计的字段
@@ -186,7 +192,7 @@ head -n 5 $HOME/tf_sfc_results/ego/ego_corridors_v4_drone_0.csv
 下面的命令只使用 Python 标准库：
 
 ```bash
-python3 - $HOME/tf_sfc_results/ego/ego_runs_v4_drone_0.csv <<'PY'
+python3 - $HOME/tf_sfc_results/ego/ego_runs_v5_drone_0.csv <<'PY'
 import csv, math, statistics, sys
 
 rows = list(csv.DictReader(open(sys.argv[1], newline='')))

@@ -299,6 +299,9 @@ namespace ego_planner
     bool tf_sfc_generated = false;
     bool fallback_to_ego = false;
     bool projection_applied = false;
+    bool final_collision_free = false;
+    bool corridor_retry_requested = false;
+    bool strict_corridor_rejected = false;
     const std::string requested_corridor_method = tf_sfc_parameters_.enabled
                                                       ? tf_sfc_parameters_.corridor_method
                                                       : "ego";
@@ -306,6 +309,8 @@ namespace ego_planner
     double tf_sfc_generation_ms = 0.0;
     int total_lbfgs_iterations = 0;
     int last_lbfgs_result = 0;
+    int corridor_enforcement_passes = 0;
+    double corridor_penalty_scale = 1.0;
     tf_sfc::CorridorVector logged_corridors;
     tf_sfc::CorridorEvaluation initial_corridor_evaluation;
     multitopology_data_.initial_obstacles_avoided = false;
@@ -318,6 +323,10 @@ namespace ego_planner
 
     Eigen::MatrixXd guidedInnerPts = initInnerPts;
     tf_corridors_.clear();
+    if (tf_sfc_manager_)
+    {
+      tf_sfc_manager_->setCorridorPenaltyScale(1.0);
+    }
     if (tf_sfc_parameters_.enabled && tf_sfc_manager_)
     {
       // TF-SFC is frozen during one optimization request. The explicit fallback
@@ -501,6 +510,8 @@ namespace ego_planner
       flag_still_unsafe = false;
       flag_success = false;
       flag_swarm_too_close = false;
+      final_collision_free = false;
+      corridor_retry_requested = false;
 
       /* ---------- optimize ---------- */
       t1 = ros::Time::now();
@@ -539,9 +550,61 @@ namespace ego_planner
         {
           if (finelyCheckAndSetConstraintPoints(segments_nouse, jerkOpt_, false) == CHK_RET::OBS_FREE)
           {
+            final_collision_free = true;
+            const bool strict_check_enabled =
+                tf_sfc_generated && !fallback_to_ego && tf_sfc_manager_ &&
+                tf_sfc_parameters_.enforce_final_corridor;
+            tf_sfc::CorridorEvaluation enforcement_evaluation;
+            if (strict_check_enabled)
+            {
+              enforcement_evaluation =
+                  tf_sfc_manager_->evaluateTrajectory(jerkOpt_.getTraj());
+            }
 
-            flag_success = true;
-            PRINTF_COND("\033[32miter=%d,time(ms)=%5.3f,total_t(ms)=%5.3f,cost=%5.3f\n\033[0m", iter_num_, time_ms, total_time_ms, final_cost);
+            if (strict_check_enabled &&
+                enforcement_evaluation.max_violation_m >
+                    tf_sfc_parameters_.max_final_violation)
+            {
+              const bool can_continue =
+                  tf_sfc_parameters_.use_soft_penalty &&
+                  tf_sfc_parameters_.weight > 0.0 &&
+                  tf_sfc_parameters_.enforcement_weight_multiplier > 1.0 &&
+                  corridor_enforcement_passes <
+                      tf_sfc_parameters_.max_enforcement_passes;
+              if (can_continue)
+              {
+                ++corridor_enforcement_passes;
+                corridor_penalty_scale *=
+                    tf_sfc_parameters_.enforcement_weight_multiplier;
+                tf_sfc_manager_->setCorridorPenaltyScale(
+                    corridor_penalty_scale);
+                corridor_retry_requested = true;
+                ROS_WARN(
+                    "TF-SFC sampled final violation %.6f m exceeds %.6f m; "
+                    "continuation pass %d/%d with corridor weight %.3f.",
+                    enforcement_evaluation.max_violation_m,
+                    tf_sfc_parameters_.max_final_violation,
+                    corridor_enforcement_passes,
+                    tf_sfc_parameters_.max_enforcement_passes,
+                    tf_sfc_parameters_.weight * corridor_penalty_scale);
+              }
+              else
+              {
+                strict_corridor_rejected = true;
+                ROS_ERROR_THROTTLE(
+                    1.0,
+                    "TF-SFC sampled final violation %.6f m exceeds %.6f m "
+                    "after %d continuation pass(es); rejecting this plan.",
+                    enforcement_evaluation.max_violation_m,
+                    tf_sfc_parameters_.max_final_violation,
+                    corridor_enforcement_passes);
+              }
+            }
+            else
+            {
+              flag_success = true;
+              PRINTF_COND("\033[32miter=%d,time(ms)=%5.3f,total_t(ms)=%5.3f,cost=%5.3f\n\033[0m", iter_num_, time_ms, total_time_ms, final_cost);
+            }
           }
           else
           {
@@ -586,7 +649,8 @@ namespace ego_planner
       }
 
     } while ((flag_still_unsafe && restart_nums < 3) ||
-             (flag_force_return && force_stop_type_ == STOP_FOR_REBOUND && rebound_times <= 20));
+             (flag_force_return && force_stop_type_ == STOP_FOR_REBOUND && rebound_times <= 20) ||
+             corridor_retry_requested);
 
     if (tf_sfc_experiment_logger_ && tf_sfc_experiment_logger_->enabled())
     {
@@ -594,8 +658,9 @@ namespace ego_planner
       record.run_id = tf_sfc_experiment_logger_->makeRunId(drone_id_);
       record.experiment_tag = tf_sfc_experiment_logger_->experimentTag();
       record.status = flag_success ? "success" :
-                      (last_lbfgs_result == lbfgs::LBFGSERR_CANCELED ? "rebound_limit" :
-                       (flag_still_unsafe ? "collision_or_clearance_failure" : "solver_failure"));
+                      (strict_corridor_rejected ? "corridor_violation_failure" :
+                       (last_lbfgs_result == lbfgs::LBFGSERR_CANCELED ? "rebound_limit" :
+                        (flag_still_unsafe ? "collision_or_clearance_failure" : "solver_failure")));
       record.timestamp_s = t0.toSec();
       record.requested_method = requested_corridor_method;
       record.method = fallback_to_ego ? "ego" : requested_corridor_method;
@@ -609,7 +674,7 @@ namespace ego_planner
                                   ? static_cast<int>(tf_sfc_parameters_.direction_mode)
                                   : -1;
       record.success = flag_success;
-      record.collision_free = flag_success;
+      record.collision_free = final_collision_free;
       record.tf_sfc_generated = tf_sfc_generated;
       record.fallback_to_ego = fallback_to_ego;
       record.projection_applied = projection_applied;
@@ -639,6 +704,23 @@ namespace ego_planner
           initial_corridor_evaluation.max_violation_m;
       record.max_corridor_violation_final_m =
           final_corridor_evaluation.max_violation_m;
+      record.final_corridor_enforcement_enabled =
+          tf_sfc_generated && !fallback_to_ego &&
+          tf_sfc_parameters_.enforce_final_corridor;
+      record.max_final_violation_allowed_m =
+          record.final_corridor_enforcement_enabled
+              ? tf_sfc_parameters_.max_final_violation
+              : 0.0;
+      record.corridor_enforcement_passes = corridor_enforcement_passes;
+      record.corridor_penalty_weight_initial =
+          tf_sfc_generated && !fallback_to_ego
+              ? tf_sfc_parameters_.weight
+              : 0.0;
+      record.corridor_penalty_weight_final =
+          tf_sfc_generated && !fallback_to_ego
+              ? tf_sfc_parameters_.weight * corridor_penalty_scale
+              : 0.0;
+      record.strict_corridor_rejected = strict_corridor_rejected;
       record.trajectory_duration_s = result_trajectory.getPieceNum() > 0
                                          ? result_trajectory.getTotalDuration()
                                          : std::numeric_limits<double>::quiet_NaN();
@@ -2281,6 +2363,8 @@ namespace ego_planner
     nh.param("tf_sfc/use_soft_penalty", tf_sfc_parameters_.use_soft_penalty, false);
     nh.param("tf_sfc/allow_partial_corridors", tf_sfc_parameters_.allow_partial_corridors, true);
     nh.param("tf_sfc/allow_ego_fallback", tf_sfc_parameters_.allow_ego_fallback, true);
+    nh.param("tf_sfc/enforce_final_corridor",
+             tf_sfc_parameters_.enforce_final_corridor, true);
     nh.param("tf_sfc/visualization_enabled", tf_sfc_parameters_.visualization_enabled, true);
     nh.param<std::string>("tf_sfc/visualization_frame",
                           tf_sfc_parameters_.visualization_frame, "world");
@@ -2295,11 +2379,17 @@ namespace ego_planner
     nh.param("tf_sfc/samples_per_piece", tf_sfc_parameters_.samples_per_piece, 8);
     nh.param("tf_sfc/projection_passes", tf_sfc_parameters_.projection_passes, 4);
     nh.param("tf_sfc/min_valid_pieces", tf_sfc_parameters_.min_valid_pieces, 1);
+    nh.param("tf_sfc/max_enforcement_passes",
+             tf_sfc_parameters_.max_enforcement_passes, 2);
     nh.param("tf_sfc/safety_margin", tf_sfc_parameters_.safety_margin, 0.25);
     nh.param("tf_sfc/min_overlap_radius", tf_sfc_parameters_.min_overlap_radius, 0.15);
     nh.param("tf_sfc/max_inflation_distance", tf_sfc_parameters_.max_inflation_distance, 1.0);
     nh.param("tf_sfc/inflation_step", tf_sfc_parameters_.inflation_step, 0.10);
     nh.param("tf_sfc/weight", tf_sfc_parameters_.weight, 1000.0);
+    nh.param("tf_sfc/enforcement_weight_multiplier",
+             tf_sfc_parameters_.enforcement_weight_multiplier, 10.0);
+    nh.param("tf_sfc/max_final_violation",
+             tf_sfc_parameters_.max_final_violation, 1.0e-3);
     nh.param("tf_sfc/penalty_epsilon", tf_sfc_parameters_.penalty_epsilon, 0.02);
     nh.param("tf_sfc/decomp_local_bbox_forward",
              tf_sfc_parameters_.decomp_local_bbox_forward, 0.5);
@@ -2329,11 +2419,17 @@ namespace ego_planner
     tf_sfc_parameters_.samples_per_piece = std::max(tf_sfc_parameters_.samples_per_piece, 2);
     tf_sfc_parameters_.projection_passes = std::max(tf_sfc_parameters_.projection_passes, 1);
     tf_sfc_parameters_.min_valid_pieces = std::max(tf_sfc_parameters_.min_valid_pieces, 1);
+    tf_sfc_parameters_.max_enforcement_passes =
+        std::max(tf_sfc_parameters_.max_enforcement_passes, 0);
     tf_sfc_parameters_.safety_margin = std::max(tf_sfc_parameters_.safety_margin, 0.0);
     tf_sfc_parameters_.min_overlap_radius = std::max(tf_sfc_parameters_.min_overlap_radius, 0.0);
     tf_sfc_parameters_.max_inflation_distance = std::max(tf_sfc_parameters_.max_inflation_distance, 0.0);
     tf_sfc_parameters_.inflation_step = std::max(tf_sfc_parameters_.inflation_step, 1.0e-3);
     tf_sfc_parameters_.weight = std::max(tf_sfc_parameters_.weight, 0.0);
+    tf_sfc_parameters_.enforcement_weight_multiplier =
+        std::max(tf_sfc_parameters_.enforcement_weight_multiplier, 1.0);
+    tf_sfc_parameters_.max_final_violation =
+        std::max(tf_sfc_parameters_.max_final_violation, 0.0);
     tf_sfc_parameters_.penalty_epsilon = std::max(tf_sfc_parameters_.penalty_epsilon, 0.0);
     tf_sfc_parameters_.decomp_local_bbox_forward =
         std::max(tf_sfc_parameters_.decomp_local_bbox_forward, 1.0e-3);
@@ -2343,6 +2439,13 @@ namespace ego_planner
         std::max(tf_sfc_parameters_.decomp_local_bbox_vertical, 1.0e-3);
     tf_sfc_parameters_.decomp_overlap_extension =
         std::max(tf_sfc_parameters_.decomp_overlap_extension, 0.0);
+    if (tf_sfc_parameters_.enforce_final_corridor &&
+        !tf_sfc_parameters_.use_soft_penalty)
+    {
+      ROS_WARN("TF-SFC final corridor enforcement is enabled without the soft "
+               "corridor penalty; violations will be rejected without weight "
+               "continuation.");
+    }
     if (tf_sfc_parameters_.corridor_method != "obb" &&
         tf_sfc_parameters_.corridor_method != "ellipsoid_decomp")
     {

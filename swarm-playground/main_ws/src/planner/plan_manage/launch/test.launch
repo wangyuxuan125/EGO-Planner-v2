@@ -139,6 +139,10 @@
         <param name="tf_sfc/use_soft_penalty" value="false" type="bool"/>
         <param name="tf_sfc/allow_partial_corridors" value="true" type="bool"/>
         <param name="tf_sfc/allow_ego_fallback" value="true" type="bool"/>
+        <param name="tf_sfc/enforce_final_corridor" value="true" type="bool"/>
+        <param name="tf_sfc/max_enforcement_passes" value="2" type="int"/>
+        <param name="tf_sfc/enforcement_weight_multiplier" value="10.0" type="double"/>
+        <param name="tf_sfc/max_final_violation" value="0.001" type="double"/>
         <param name="tf_sfc/visualization_enabled" value="true" type="bool"/>
         <param name="tf_sfc/visualization_frame" value="world" type="string"/>
         <param name="tf_sfc/min_valid_pieces" value="1" type="int"/>

@@ -5,14 +5,15 @@
 - Original EGO, PCA/Frenet OBB-SFC, and Liu/DecompUtil EllipsoidDecomp can be selected explicitly.
 - Strict experiments disable EGO fallback and retain generation/optimization failures.
 - Valid prefix corridors enter the MINCO/L-BFGS objective through a frozen piece-wise half-space penalty; EllipsoidDecomp also supplies the A* guided initial points.
-- Schema v4 records goal/replan/attempt identity, timing, geometry, optimization success, constrained piece count, and sampled corridor penalty/violation before and after optimization.
+- Schema v5 records goal/replan/attempt identity, timing, geometry, optimization success, constrained piece count, sampled corridor penalty/violation before and after optimization, continuation passes, final weight, and strict rejection.
+- A sampled final-corridor gate now performs bounded penalty continuation and rejects unresolved corridor violations instead of counting them as TF-SFC successes.
 - DecompROS publication is kept separate from corridor generation and optimization.
 
 ## Required before freezing paper results
 
 1. Run clean Release builds with the exact ROS Noetic, Eigen, DecompUtil and DecompROS revisions recorded in a lock/setup document.
 2. Execute regression tests for at least 30 fixed seeds before large experiments. Confirm that `piece_budget_tail` replaces the near-goal retry storm and does not increase final collision failures.
-3. Freeze one CSV schema and aggregation script. Aggregate optimizer calls by independent `goal_id`; report replan-call success only as a secondary runtime metric. Add an FSM-level goal-arrival/timeout/collision record before calling the aggregate a mission-success rate: schema v4 identifies a goal but does not yet prove that the vehicle reached it.
+3. Freeze one CSV schema and aggregation script. Aggregate optimizer calls by independent `goal_id`; report replan-call success only as a secondary runtime metric. Add an FSM-level goal-arrival/timeout/collision record before calling the aggregate a mission-success rate: schema v5 identifies a goal but does not yet prove that the vehicle reached it.
 4. Add continuous or sufficiently conservative trajectory-versus-corridor verification. The current `max_corridor_violation_*` values are quadrature-sampled diagnostics, not a mathematical continuous-time certificate.
 5. Define identical maps, start/goal pairs, dynamics, obstacle inflation, time limits, warm-up policy and failure denominators for all EGO and GCOPTER baselines.
 6. Run the full method matrix and ablations: original EGO, OBB without/with overlap handling, EllipsoidDecomp with extension 0/0.20 m, and GCOPTER FIRI/EllipsoidDecomp/TF-SFC.

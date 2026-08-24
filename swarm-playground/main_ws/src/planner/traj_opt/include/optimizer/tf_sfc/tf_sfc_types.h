@@ -93,6 +93,7 @@ struct Parameters
   bool use_soft_penalty = false;
   bool allow_partial_corridors = true;
   bool allow_ego_fallback = true;
+  bool enforce_final_corridor = true;
   bool visualization_enabled = true;
   bool log_enabled = true;
   std::string visualization_frame = "world";
@@ -105,11 +106,14 @@ struct Parameters
   int samples_per_piece = 8;
   int projection_passes = 4;
   int min_valid_pieces = 1;
+  int max_enforcement_passes = 2;
   double safety_margin = 0.25;
   double min_overlap_radius = 0.15;
   double max_inflation_distance = 1.0;
   double inflation_step = 0.10;
   double weight = 1000.0;
+  double enforcement_weight_multiplier = 10.0;
+  double max_final_violation = 1.0e-3;
   double penalty_epsilon = 0.02;
   double decomp_local_bbox_forward = 0.5;
   double decomp_local_bbox_lateral = 1.0;

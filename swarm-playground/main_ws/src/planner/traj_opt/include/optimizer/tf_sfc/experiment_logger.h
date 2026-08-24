@@ -53,6 +53,12 @@ struct ExperimentRunRecord
   double corridor_penalty_cost_final = 0.0;
   double max_corridor_violation_initial_m = 0.0;
   double max_corridor_violation_final_m = 0.0;
+  bool final_corridor_enforcement_enabled = false;
+  double max_final_violation_allowed_m = 0.0;
+  int corridor_enforcement_passes = 0;
+  double corridor_penalty_weight_initial = 0.0;
+  double corridor_penalty_weight_final = 0.0;
+  bool strict_corridor_rejected = false;
   double final_cost = 0.0;
   double trajectory_duration_s = 0.0;
   double trajectory_length_m_sampled = 0.0;

@@ -37,6 +37,8 @@ public:
   CorridorEvaluation evaluateTrajectory(
       const poly_traj::Trajectory &trajectory) const;
 
+  void setCorridorPenaltyScale(double scale);
+
   void setPieceSensitivityGramians(
       const std::vector<Eigen::Matrix3d, Eigen::aligned_allocator<Eigen::Matrix3d>> &gramians);
 
@@ -60,6 +62,7 @@ private:
   SensitivityDirectionProvider sensitivity_provider_;
   DirectionalInflator inflator_;
   CorridorVector corridors_;
+  double corridor_penalty_scale_{1.0};
 };
 
 } // namespace tf_sfc

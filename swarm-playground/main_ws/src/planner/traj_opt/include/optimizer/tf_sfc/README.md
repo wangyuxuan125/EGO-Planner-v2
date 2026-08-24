@@ -36,8 +36,10 @@ EGO-Planner-v2's original rebound, restart, swarm, and final collision-check pat
   MINCO piece budget, the optimizer keeps a certified prefix and labels the
   unconstrained final segment `piece_budget_tail` instead of rapidly rejecting
   every replan.
-- Schema-v4 experiment logs group optimizer calls by goal/replan/attempt and
-  record sampled corridor penalty and maximum violation before and after L-BFGS.
+- Schema-v5 experiment logs group optimizer calls by goal/replan/attempt,
+  record sampled corridor penalty and maximum violation before and after
+  L-BFGS, and expose bounded penalty-continuation passes plus strict final
+  rejection.
 - Configurable EGO fallback. Operational launches may allow fallback; strict
   experiments can reject generation failures instead of silently counting an
   original-EGO result as TF-SFC success.

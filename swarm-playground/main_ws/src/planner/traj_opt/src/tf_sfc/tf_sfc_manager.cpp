@@ -427,6 +427,12 @@ bool TfSfcManager::generateEllipsoidDecomp(const PointVector &seed_path,
 void TfSfcManager::clearCorridors()
 {
   corridors_.clear();
+  corridor_penalty_scale_ = 1.0;
+}
+
+void TfSfcManager::setCorridorPenaltyScale(const double scale)
+{
+  corridor_penalty_scale_ = std::max(scale, 1.0);
 }
 
 bool TfSfcManager::projectJunctions(Eigen::MatrixXd &inner_points,
@@ -499,8 +505,10 @@ bool TfSfcManager::corridorGradCost(const int piece_id,
     if (violation > 0.0)
     {
       active = true;
-      cost += parameters_.weight * violation * violation;
-      gradient.noalias() += 2.0 * parameters_.weight * violation * normal;
+      const double effective_weight =
+          parameters_.weight * corridor_penalty_scale_;
+      cost += effective_weight * violation * violation;
+      gradient.noalias() += 2.0 * effective_weight * violation * normal;
     }
   }
   return active;
@@ -546,8 +554,8 @@ CorridorEvaluation TfSfcManager::evaluateTrajectory(
             signed_violation + parameters_.penalty_epsilon;
         if (parameters_.use_soft_penalty && buffered_violation > 0.0)
         {
-          sample_penalty += parameters_.weight * buffered_violation *
-                            buffered_violation;
+          sample_penalty += parameters_.weight * corridor_penalty_scale_ *
+                            buffered_violation * buffered_violation;
         }
       }
       const double quadrature_weight =
