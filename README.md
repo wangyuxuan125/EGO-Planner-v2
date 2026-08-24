@@ -8,6 +8,6 @@ Please follow the [tutorial PDF file](swarm-playground/[README]_Brief_Documentat
 This work was born out of [MINCO](https://github.com/ZJU-FAST-Lab/GCOPTER).
 If you find it interesting, please give both repos stars generously. Thanks.
 
-The experimental TF-SFC branch includes a Chinese [build, launch, and CSV logging guide](TF_SFC_EXPERIMENT_GUIDE.md).
+The experimental TF-SFC branch includes a Chinese [build, launch, and CSV logging guide](TF_SFC_EXPERIMENT_GUIDE.md). The EllipsoidDecomp baseline now uses a local-map-bounded A* seed and overlap-aware per-segment dilation; set `tf_sfc_decomp_overlap_extension:=0` to reproduce the non-extended ablation.
 
 <img src="images/cover.jpg" alt="drawing" width="400"/>

@@ -140,12 +140,29 @@ bool TfSfcManager::generateEllipsoidDecomp(const PointVector &seed_path,
   path.reserve(seed_path.size());
   for (const Eigen::Vector3d &point : seed_path)
   {
-    if (!point.allFinite() || !grid_map_->isInInflatedMap(point) ||
-        grid_map_->getInflateOccupancy(point) != 0)
+    if (!point.allFinite())
     {
       Corridor failed;
       failed.metrics.piece_id = static_cast<int>(path.size());
-      failed.metrics.failure_reason = FailureReason::SEED_PATH_FAILURE;
+      failed.metrics.failure_reason = FailureReason::INVALID_INPUT;
+      corridors.push_back(failed);
+      corridors_ = corridors;
+      return false;
+    }
+    if (!grid_map_->isInInflatedMap(point))
+    {
+      Corridor failed;
+      failed.metrics.piece_id = static_cast<int>(path.size());
+      failed.metrics.failure_reason = FailureReason::SEED_PATH_OUTSIDE_MAP;
+      corridors.push_back(failed);
+      corridors_ = corridors;
+      return false;
+    }
+    if (grid_map_->getInflateOccupancy(point) != 0)
+    {
+      Corridor failed;
+      failed.metrics.piece_id = static_cast<int>(path.size());
+      failed.metrics.failure_reason = FailureReason::SEED_PATH_OCCUPIED;
       corridors.push_back(failed);
       corridors_ = corridors;
       return false;
@@ -202,19 +219,96 @@ bool TfSfcManager::generateEllipsoidDecomp(const PointVector &seed_path,
   }
 
   const auto started = std::chrono::steady_clock::now();
-  EllipsoidDecomp3D decomp;
-  decomp.set_obs(obstacles);
   Vec3f local_bbox;
   local_bbox << std::max(parameters_.decomp_local_bbox_forward, resolution),
                 std::max(parameters_.decomp_local_bbox_lateral, resolution),
                 std::max(parameters_.decomp_local_bbox_vertical, resolution);
-  decomp.set_local_bbox(local_bbox);
-  decomp.dilate(path);
-  const vec_E<Polyhedron3D> polyhedrons = decomp.get_polyhedrons();
+  vec_E<Polyhedron3D> polyhedrons;
+  polyhedrons.reserve(path.size() - 1);
+  bool decomp_ok = true;
+  const auto segment_is_free = [&](const Vec3f &start, const Vec3f &finish) {
+    const double length = (finish - start).norm();
+    const int sample_count = std::max(
+        1, static_cast<int>(std::ceil(length /
+                                      std::max(0.5 * resolution, 1.0e-3))));
+    for (int sample_id = 0; sample_id <= sample_count; ++sample_id)
+    {
+      const double alpha = static_cast<double>(sample_id) /
+                           static_cast<double>(sample_count);
+      const Vec3f point = (1.0 - alpha) * start + alpha * finish;
+      if (!grid_map_->isInInflatedMap(point) ||
+          grid_map_->getInflateOccupancy(point) != 0)
+      {
+        return false;
+      }
+    }
+    return true;
+  };
+  for (int piece_id = 0; piece_id + 1 < static_cast<int>(path.size()); ++piece_id)
+  {
+    Vec3f segment_start = path[piece_id];
+    Vec3f segment_finish = path[piece_id + 1];
+    const double requested_extension =
+        std::max(parameters_.decomp_overlap_extension, 0.0);
+    const Vec3f segment_delta = segment_finish - segment_start;
+    const double segment_length = segment_delta.norm();
+    const Vec3f segment_direction =
+        segment_delta / std::max(segment_length, 1.0e-9);
+
+    // Make each shared junction an interior point of both neighboring seed
+    // segments. Extend along the segment tangent, collision-check the added
+    // portion, and back off rather than weakening the overlap certificate.
+    if (piece_id > 0 && requested_extension > 0.0 && segment_length > 1.0e-9)
+    {
+      double extension = std::min(requested_extension, 0.45 * segment_length);
+      while (extension >= 0.25 * resolution)
+      {
+        const Vec3f candidate = path[piece_id] - extension * segment_direction;
+        if (segment_is_free(candidate, path[piece_id]))
+        {
+          segment_start = candidate;
+          break;
+        }
+        extension *= 0.5;
+      }
+    }
+    if (piece_id + 2 < static_cast<int>(path.size()) &&
+        requested_extension > 0.0 && segment_length > 1.0e-9)
+    {
+      double extension = std::min(requested_extension, 0.45 * segment_length);
+      while (extension >= 0.25 * resolution)
+      {
+        const Vec3f candidate =
+            path[piece_id + 1] + extension * segment_direction;
+        if (segment_is_free(path[piece_id + 1], candidate))
+        {
+          segment_finish = candidate;
+          break;
+        }
+        extension *= 0.5;
+      }
+    }
+
+    vec_Vec3f segment_path;
+    segment_path.push_back(segment_start);
+    segment_path.push_back(segment_finish);
+    EllipsoidDecomp3D segment_decomp;
+    segment_decomp.set_obs(obstacles);
+    segment_decomp.set_local_bbox(local_bbox);
+    segment_decomp.dilate(segment_path);
+    const vec_E<Polyhedron3D> segment_polyhedrons =
+        segment_decomp.get_polyhedrons();
+    if (segment_polyhedrons.size() != 1)
+    {
+      decomp_ok = false;
+      break;
+    }
+    polyhedrons.push_back(segment_polyhedrons.front());
+  }
   const double total_ms = std::chrono::duration<double, std::milli>(
                               std::chrono::steady_clock::now() - started)
                               .count();
-  if (polyhedrons.size() + 1 != path.size())
+  if (!decomp_ok || polyhedrons.size() + 1 != path.size())
   {
     Corridor failed;
     failed.metrics.piece_id = 0;

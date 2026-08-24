@@ -23,9 +23,15 @@ EGO-Planner-v2's original rebound, restart, swarm, and final collision-check pat
 - EllipsoidDecomp uses the same certified-prefix policy: its A* seed terminates
   one voxel inside the rolling-map boundary and preserves at least one
   unconstrained tail piece when the planning horizon extends beyond known space.
+  The TF-SFC seed search treats the rolling-map exterior as invalid without
+  changing EGO's other A* calls, and records distinct start/search/boundary/
+  occupancy failures.
   If the simplified A* prefix has more bends than the available prefix pieces,
   the certified path stops at the farthest bend that fits instead of rejecting
   every corridor near the goal.
+- EllipsoidDecomp dilates each seed segment independently. Collision-checked,
+  tangent-aligned endpoint extensions give adjacent polytopes a larger shared
+  interior while preserving the configured minimum-overlap certificate.
 - Configurable EGO fallback. Operational launches may allow fallback; strict
   experiments can reject generation failures instead of silently counting an
   original-EGO result as TF-SFC success.
@@ -45,6 +51,7 @@ The launch files expose the following private ROS parameters:
 | Parameter | Meaning |
 | --- | --- |
 | `tf_sfc/enabled` | Master switch; defaults to `false`. |
+| `tf_sfc/corridor_method` | `obb` for the TF-SFC MVP or `ellipsoid_decomp` for the Liu et al. baseline. |
 | `tf_sfc/direction_mode` | `0`: Frenet, `1`: PCA, `2`: sensitivity Gramian. |
 | `tf_sfc/use_projection` | Project inner junctions into adjacent-corridor intersections. |
 | `tf_sfc/use_soft_penalty` | Add the frozen corridor hinge-squared penalty. |
@@ -61,6 +68,8 @@ The launch files expose the following private ROS parameters:
 | `tf_sfc/inflation_step` | Directional inflation step. |
 | `tf_sfc/weight` | Soft corridor penalty weight. |
 | `tf_sfc/penalty_epsilon` | Interior buffer used by the soft penalty. |
+| `tf_sfc/decomp_local_bbox_{forward,lateral,vertical}` | Local EllipsoidDecomp bounding-box dimensions. |
+| `tf_sfc/decomp_overlap_extension` | Collision-checked tangent extension in metres; `0` disables it for ablation. |
 
 For a first simulation ablation, enable PCA corridors and the soft penalty while
 leaving projection disabled. Projection is expected to do little when a corridor

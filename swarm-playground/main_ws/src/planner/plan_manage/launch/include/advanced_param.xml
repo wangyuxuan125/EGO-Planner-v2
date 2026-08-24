@@ -51,6 +51,7 @@
     <arg name="tf_sfc_decomp_local_bbox_forward" default="0.5"/>
     <arg name="tf_sfc_decomp_local_bbox_lateral" default="1.0"/>
     <arg name="tf_sfc_decomp_local_bbox_vertical" default="1.0"/>
+    <arg name="tf_sfc_decomp_overlap_extension" default="0.20"/>
     <!-- main node -->
     <!-- <node pkg="ego_planner" name="ego_planner_node" type="ego_planner_node" output="screen" launch-prefix="valgrind"> -->
     <node pkg="ego_planner" name="drone_$(arg drone_id)_ego_planner_node" type="ego_planner_node" output="screen">
@@ -179,5 +180,6 @@
         <param name="tf_sfc/decomp_local_bbox_forward" value="$(arg tf_sfc_decomp_local_bbox_forward)" type="double"/>
         <param name="tf_sfc/decomp_local_bbox_lateral" value="$(arg tf_sfc_decomp_local_bbox_lateral)" type="double"/>
         <param name="tf_sfc/decomp_local_bbox_vertical" value="$(arg tf_sfc_decomp_local_bbox_vertical)" type="double"/>
+        <param name="tf_sfc/decomp_overlap_extension" value="$(arg tf_sfc_decomp_overlap_extension)" type="double"/>
     </node>
 </launch>

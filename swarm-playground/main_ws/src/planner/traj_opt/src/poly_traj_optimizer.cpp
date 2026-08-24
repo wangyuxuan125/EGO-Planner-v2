@@ -13,13 +13,21 @@ using namespace std;
 
 namespace
 {
-bool segmentIsFree(const GridMap::Ptr &grid_map,
-                   const Eigen::Vector3d &start,
-                   const Eigen::Vector3d &finish)
+enum class SegmentState
+{
+  FREE,
+  INVALID_INPUT,
+  OUTSIDE_MAP,
+  OCCUPIED
+};
+
+SegmentState segmentState(const GridMap::Ptr &grid_map,
+                          const Eigen::Vector3d &start,
+                          const Eigen::Vector3d &finish)
 {
   if (!grid_map || !start.allFinite() || !finish.allFinite())
   {
-    return false;
+    return SegmentState::INVALID_INPUT;
   }
   const double resolution = grid_map->getResolution();
   const double length = (finish - start).norm();
@@ -30,13 +38,32 @@ bool segmentIsFree(const GridMap::Ptr &grid_map,
     const double alpha = static_cast<double>(sample_id) /
                          static_cast<double>(samples);
     const Eigen::Vector3d point = (1.0 - alpha) * start + alpha * finish;
-    if (!grid_map->isInInflatedMap(point) ||
-        grid_map->getInflateOccupancy(point) != 0)
+    if (!grid_map->isInInflatedMap(point))
     {
-      return false;
+      return SegmentState::OUTSIDE_MAP;
+    }
+    if (grid_map->getInflateOccupancy(point) != 0)
+    {
+      return SegmentState::OCCUPIED;
     }
   }
-  return true;
+  return SegmentState::FREE;
+}
+
+ego_planner::tf_sfc::FailureReason segmentFailureReason(const SegmentState state)
+{
+  switch (state)
+  {
+  case SegmentState::OUTSIDE_MAP:
+    return ego_planner::tf_sfc::FailureReason::SEED_PATH_OUTSIDE_MAP;
+  case SegmentState::OCCUPIED:
+    return ego_planner::tf_sfc::FailureReason::SEED_PATH_OCCUPIED;
+  case SegmentState::INVALID_INPUT:
+    return ego_planner::tf_sfc::FailureReason::INVALID_INPUT;
+  case SegmentState::FREE:
+    break;
+  }
+  return ego_planner::tf_sfc::FailureReason::SEED_PATH_FAILURE;
 }
 
 bool buildFixedPieceSeedPath(const GridMap::Ptr &grid_map,
@@ -59,10 +86,14 @@ bool buildFixedPieceSeedPath(const GridMap::Ptr &grid_map,
     return false;
   }
 
-  if (!grid_map->isInInflatedMap(start) ||
-      grid_map->getInflateOccupancy(start) != 0)
+  if (!grid_map->isInInflatedMap(start))
   {
-    failure_reason = ego_planner::tf_sfc::FailureReason::SEED_PATH_FAILURE;
+    failure_reason = ego_planner::tf_sfc::FailureReason::SEED_PATH_OUTSIDE_MAP;
+    return false;
+  }
+  if (grid_map->getInflateOccupancy(start) != 0)
+  {
+    failure_reason = ego_planner::tf_sfc::FailureReason::SEED_START_INVALID;
     return false;
   }
 
@@ -122,17 +153,17 @@ bool buildFixedPieceSeedPath(const GridMap::Ptr &grid_map,
     }
   }
 
-  if (a_star->AstarSearch(grid_map->getResolution(), start, seed_finish) !=
+  if (a_star->AstarSearch(grid_map->getResolution(), start, seed_finish, true) !=
       ASTAR_RET::SUCCESS)
   {
-    failure_reason = ego_planner::tf_sfc::FailureReason::SEED_PATH_FAILURE;
+    failure_reason = ego_planner::tf_sfc::FailureReason::SEED_ASTAR_FAILURE;
     return false;
   }
 
   std::vector<Eigen::Vector3d> raw_path = a_star->getPath();
   if (raw_path.empty())
   {
-    failure_reason = ego_planner::tf_sfc::FailureReason::SEED_PATH_FAILURE;
+    failure_reason = ego_planner::tf_sfc::FailureReason::SEED_ASTAR_FAILURE;
     return false;
   }
   raw_path.front() = start;
@@ -145,13 +176,16 @@ bool buildFixedPieceSeedPath(const GridMap::Ptr &grid_map,
   {
     int next = static_cast<int>(raw_path.size()) - 1;
     while (next > current + 1 &&
-           !segmentIsFree(grid_map, raw_path[current], raw_path[next]))
+           segmentState(grid_map, raw_path[current], raw_path[next]) !=
+               SegmentState::FREE)
     {
       --next;
     }
-    if (!segmentIsFree(grid_map, raw_path[current], raw_path[next]))
+    const SegmentState state =
+        segmentState(grid_map, raw_path[current], raw_path[next]);
+    if (state != SegmentState::FREE)
     {
-      failure_reason = ego_planner::tf_sfc::FailureReason::SEED_PATH_FAILURE;
+      failure_reason = segmentFailureReason(state);
       return false;
     }
     simplified.push_back(raw_path[next]);
@@ -2216,6 +2250,8 @@ namespace ego_planner
              tf_sfc_parameters_.decomp_local_bbox_lateral, 1.0);
     nh.param("tf_sfc/decomp_local_bbox_vertical",
              tf_sfc_parameters_.decomp_local_bbox_vertical, 1.0);
+    nh.param("tf_sfc/decomp_overlap_extension",
+             tf_sfc_parameters_.decomp_overlap_extension, 0.20);
 
     int direction_mode = static_cast<int>(tf_sfc::DirectionMode::PCA);
     nh.param("tf_sfc/direction_mode", direction_mode,
@@ -2248,6 +2284,8 @@ namespace ego_planner
         std::max(tf_sfc_parameters_.decomp_local_bbox_lateral, 1.0e-3);
     tf_sfc_parameters_.decomp_local_bbox_vertical =
         std::max(tf_sfc_parameters_.decomp_local_bbox_vertical, 1.0e-3);
+    tf_sfc_parameters_.decomp_overlap_extension =
+        std::max(tf_sfc_parameters_.decomp_overlap_extension, 0.0);
     if (tf_sfc_parameters_.corridor_method != "obb" &&
         tf_sfc_parameters_.corridor_method != "ellipsoid_decomp")
     {

@@ -44,6 +44,7 @@
     <arg name="tf_sfc_decomp_local_bbox_forward" default="0.5"/>
     <arg name="tf_sfc_decomp_local_bbox_lateral" default="1.0"/>
     <arg name="tf_sfc_decomp_local_bbox_vertical" default="1.0"/>
+    <arg name="tf_sfc_decomp_overlap_extension" default="0.20"/>
     <!-- main algorithm params -->
     <include file="$(find ego_planner)/launch/include/advanced_param.xml">
         <arg name="drone_id" value="$(arg drone_id)"/>
@@ -89,6 +90,7 @@
         <arg name="tf_sfc_decomp_local_bbox_forward" value="$(arg tf_sfc_decomp_local_bbox_forward)"/>
         <arg name="tf_sfc_decomp_local_bbox_lateral" value="$(arg tf_sfc_decomp_local_bbox_lateral)"/>
         <arg name="tf_sfc_decomp_local_bbox_vertical" value="$(arg tf_sfc_decomp_local_bbox_vertical)"/>
+        <arg name="tf_sfc_decomp_overlap_extension" value="$(arg tf_sfc_decomp_overlap_extension)"/>
         <!-- 1: use 2D Nav Goal to select goal  -->
         <!-- 2: use global waypoints below  -->
         <arg name="flight_type" value="$(arg flight_type)" />

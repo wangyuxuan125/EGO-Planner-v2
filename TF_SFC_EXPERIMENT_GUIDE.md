@@ -115,10 +115,13 @@ roslaunch ego_planner single_drone_interactive.launch \
   tf_sfc_decomp_local_bbox_forward:=0.5 \
   tf_sfc_decomp_local_bbox_lateral:=1.0 \
   tf_sfc_decomp_local_bbox_vertical:=1.0 \
+  tf_sfc_decomp_overlap_extension:=0.20 \
   tf_sfc_experiment_tag:=liu_ellipsoid_decomp
 ```
 
-该分支先调用 EGO 已有 A* 生成无碰撞骨架，做视线简化后按 MINCO piece 预算细分，再调用 `EllipsoidDecomp3D::dilate`。EGO 使用滚动局部地图；当规划视野大于当前地图范围时，只为从当前状态开始、位于已知地图内的连续前缀生成走廊。若 A* 前缀的转折数超过可用 prefix piece 数，则保留能够放入预算的最远可视折点，而不是丢弃整个走廊序列。第一个未覆盖 piece 记录为 `outside_local_map`，其后记录为 `skipped_after_failure`。因此 `tf_sfc_allow_partial_corridors:=true` 是该局部规划器的正常严格配置；`allow_ego_fallback` 仍保持 `false`，不会把原始 EGO 结果计作走廊方法成功。A*、简化和分解耗时都计入 `corridor_generation_ms` 与 `total_planning_ms`。若 DecompUtil 未被发现，会以 `decomp_util_unavailable` 失败，不会静默退化为 OBB 或 EGO。
+该分支先调用 EGO 已有 A* 生成无碰撞骨架，做视线简化后按 MINCO piece 预算细分，再逐段调用 `EllipsoidDecomp3D::dilate`。TF-SFC 的这次 A* 调用严格限制在当前膨胀局部地图内，不能把地图外未知空间当作自由空间；这一限制不改变原始 EGO 的其他 A* 调用。为提高相邻多面体在折点处的公共内域，每个分解 seed 段会沿自身切向向共享折点外延伸，延伸部分逐点检查局部地图；遇到障碍或边界时自动折半回退。延伸量由 `tf_sfc_decomp_overlap_extension` 控制并限制为当前段长度的 45% 以下。`0` 可关闭该优化，用于消融实验；它不会降低 `tf_sfc_min_overlap_radius` 的认证阈值。
+
+EGO 使用滚动局部地图；当规划视野大于当前地图范围时，只为从当前状态开始、位于已知地图内的连续前缀生成走廊。若 A* 前缀的转折数超过可用 prefix piece 数，则保留能够放入预算的最远可视折点，而不是丢弃整个走廊序列。第一个未覆盖 piece 记录为 `outside_local_map`，其后记录为 `skipped_after_failure`。因此 `tf_sfc_allow_partial_corridors:=true` 是该局部规划器的正常严格配置；`allow_ego_fallback` 仍保持 `false`，不会把原始 EGO 结果计作走廊方法成功。A*、简化和分解耗时都计入 `corridor_generation_ms` 与 `total_planning_ms`。若 DecompUtil 未被发现，会以 `decomp_util_unavailable` 失败，不会静默退化为 OBB 或 EGO。
 
 `single_drone_interactive.launch` 对 EGO 回退默认采用严格模式（`tf_sfc_allow_ego_fallback=false`）；只有明确进行工程可用性测试时才建议手动开启回退。
 
@@ -161,7 +164,7 @@ $HOME/tf_sfc_results/ego/ego_corridors_v3_drone_0.csv
 ```
 
 - `ego_runs_v3_drone_<id>.csv`：每次优化调用一行，新增 `requested_method` 与 `method`，并包含状态、成功/无碰撞标志、规划与优化耗时、LBFGS 迭代、有效/失败分段数、首个失败原因、最终代价、轨迹时长和采样近似轨迹长度。
-- `ego_corridors_v3_drone_<id>.csv`：每个轨迹分段一行；有效段记录方法、面数、生成时间、宽度代理、样本余量和相邻重叠半径，无效段记录 `outside_local_map`、`initial_obb_occupied`、`seed_path_failure`、`decomp_failure`、`overlap_too_small` 等原因。
+- `ego_corridors_v3_drone_<id>.csv`：每个轨迹分段一行；有效段记录方法、面数、生成时间、宽度代理、样本余量和相邻重叠半径。A* seed 阶段会区分 `seed_start_invalid`、`seed_astar_failure`、`seed_path_outside_map`、`seed_path_occupied`；分解阶段还会记录 `outside_local_map`、`decomp_failure`、`overlap_too_small` 等原因。
 
 文件使用追加模式。不要在同一标签下混入不同地图或参数；建议每个场景使用独立目录或唯一 `tf_sfc_experiment_tag`。
 
@@ -211,6 +214,7 @@ PY
 6. `allow_partial_corridors=true` 表示只约束从当前状态开始、位于已知局部地图内的连续有效前缀；末端未知空间不会导致前面已认证走廊全部丢失。
 7. 对当前默认参数，局部地图横向半径为 `5.5 m`，规划视野为 `7.5 m`。设置 `allow_partial_corridors=false` 要求整个 7.5 m 轨迹都在 5.5 m 地图内，通常会得到 `outside_local_map`，不应作为默认实验配置。
 8. 当剩余轨迹只有 2 个 piece 时，局部前缀最多使用 1 个走廊 piece。实现会保留 A* 简化后的第一个最远可视段，其余路线继续由 EGO 的障碍代价和最终碰撞检查处理，避免在接近目标时出现快速 `insufficient_pieces` 重试。
+9. 正式对比时固定 `tf_sfc_decomp_overlap_extension`。建议主实验使用 `0.20 m`，并额外报告 `0 m` 消融，以判断成功率提升来自重叠构造还是其他参数变化。
 
 ## 7. 将 Liu et al. ICRA 2017 作为对比方法
 

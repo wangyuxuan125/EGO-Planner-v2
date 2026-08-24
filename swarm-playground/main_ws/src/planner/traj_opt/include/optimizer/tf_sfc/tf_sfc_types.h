@@ -54,7 +54,11 @@ enum class FailureReason
   SEED_PATH_FAILURE = 7,
   DECOMP_UTIL_UNAVAILABLE = 8,
   DECOMP_FAILURE = 9,
-  INSUFFICIENT_PIECES = 10
+  INSUFFICIENT_PIECES = 10,
+  SEED_START_INVALID = 11,
+  SEED_ASTAR_FAILURE = 12,
+  SEED_PATH_OUTSIDE_MAP = 13,
+  SEED_PATH_OCCUPIED = 14
 };
 
 inline const char *failureReasonName(const FailureReason reason)
@@ -72,6 +76,10 @@ inline const char *failureReasonName(const FailureReason reason)
   case FailureReason::DECOMP_UTIL_UNAVAILABLE: return "decomp_util_unavailable";
   case FailureReason::DECOMP_FAILURE: return "decomp_failure";
   case FailureReason::INSUFFICIENT_PIECES: return "insufficient_pieces";
+  case FailureReason::SEED_START_INVALID: return "seed_start_invalid";
+  case FailureReason::SEED_ASTAR_FAILURE: return "seed_astar_failure";
+  case FailureReason::SEED_PATH_OUTSIDE_MAP: return "seed_path_outside_map";
+  case FailureReason::SEED_PATH_OCCUPIED: return "seed_path_occupied";
   }
   return "unknown";
 }
@@ -104,6 +112,7 @@ struct Parameters
   double decomp_local_bbox_forward = 0.5;
   double decomp_local_bbox_lateral = 1.0;
   double decomp_local_bbox_vertical = 1.0;
+  double decomp_overlap_extension = 0.20;
 };
 
 struct DirectionSet
