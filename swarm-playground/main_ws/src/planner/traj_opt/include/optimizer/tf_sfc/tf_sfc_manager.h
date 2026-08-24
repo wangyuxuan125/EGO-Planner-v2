@@ -19,6 +19,7 @@ public:
 
   bool generateEllipsoidDecomp(const PointVector &seed_path,
                                int expected_piece_count,
+                               FailureReason uncovered_failure_reason,
                                CorridorVector &corridors);
 
   bool ellipsoidDecompAvailable() const;
@@ -32,6 +33,9 @@ public:
                         const Eigen::Vector3d &point,
                         Eigen::Vector3d &gradient,
                         double &cost) const;
+
+  CorridorEvaluation evaluateTrajectory(
+      const poly_traj::Trajectory &trajectory) const;
 
   void setPieceSensitivityGramians(
       const std::vector<Eigen::Matrix3d, Eigen::aligned_allocator<Eigen::Matrix3d>> &gramians);

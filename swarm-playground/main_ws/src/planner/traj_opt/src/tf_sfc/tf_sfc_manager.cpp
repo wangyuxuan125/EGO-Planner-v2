@@ -113,6 +113,7 @@ bool TfSfcManager::ellipsoidDecompAvailable() const
 
 bool TfSfcManager::generateEllipsoidDecomp(const PointVector &seed_path,
                                            const int expected_piece_count,
+                                           const FailureReason uncovered_failure_reason,
                                            CorridorVector &corridors)
 {
   corridors.clear();
@@ -325,7 +326,10 @@ bool TfSfcManager::generateEllipsoidDecomp(const PointVector &seed_path,
     corridors[piece_id].metrics.piece_id = piece_id;
     if (piece_id == static_cast<int>(polyhedrons.size()))
     {
-      corridors[piece_id].metrics.failure_reason = FailureReason::OUTSIDE_LOCAL_MAP;
+      corridors[piece_id].metrics.failure_reason =
+          uncovered_failure_reason == FailureReason::NONE
+              ? FailureReason::OUTSIDE_LOCAL_MAP
+              : uncovered_failure_reason;
     }
     else if (piece_id > static_cast<int>(polyhedrons.size()))
     {
@@ -500,6 +504,58 @@ bool TfSfcManager::corridorGradCost(const int piece_id,
     }
   }
   return active;
+}
+
+CorridorEvaluation TfSfcManager::evaluateTrajectory(
+    const poly_traj::Trajectory &trajectory) const
+{
+  CorridorEvaluation evaluation;
+  const int piece_count = std::min(
+      trajectory.getPieceNum(), static_cast<int>(corridors_.size()));
+  const int sample_count = std::max(parameters_.samples_per_piece, 2);
+  for (int piece_id = 0; piece_id < piece_count; ++piece_id)
+  {
+    const Corridor &corridor = corridors_[piece_id];
+    if (!corridor.metrics.valid || corridor.hpoly.rows() == 0)
+    {
+      continue;
+    }
+    ++evaluation.constrained_piece_count;
+    const poly_traj::Piece &piece = trajectory[piece_id];
+    const double step = piece.getDuration() /
+                        static_cast<double>(sample_count);
+    for (int sample_id = 0; sample_id <= sample_count; ++sample_id)
+    {
+      const double time = step * static_cast<double>(sample_id);
+      const Eigen::Vector3d point = piece.getPos(time);
+      double sample_penalty = 0.0;
+      for (int face_id = 0; face_id < corridor.hpoly.rows(); ++face_id)
+      {
+        const Eigen::Vector3d normal =
+            corridor.hpoly.row(face_id).head<3>().transpose();
+        const double normal_norm = normal.norm();
+        if (normal_norm <= 1.0e-12)
+        {
+          continue;
+        }
+        const double signed_violation =
+            normal.dot(point) - corridor.hpoly(face_id, 3);
+        evaluation.max_violation_m = std::max(
+            evaluation.max_violation_m, signed_violation / normal_norm);
+        const double buffered_violation =
+            signed_violation + parameters_.penalty_epsilon;
+        if (parameters_.use_soft_penalty && buffered_violation > 0.0)
+        {
+          sample_penalty += parameters_.weight * buffered_violation *
+                            buffered_violation;
+        }
+      }
+      const double quadrature_weight =
+          (sample_id == 0 || sample_id == sample_count) ? 0.5 : 1.0;
+      evaluation.penalty_cost += quadrature_weight * step * sample_penalty;
+    }
+  }
+  return evaluation;
 }
 
 void TfSfcManager::setPieceSensitivityGramians(

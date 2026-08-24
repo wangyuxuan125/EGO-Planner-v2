@@ -159,25 +159,25 @@ rostopic echo -n 1 /drone_0_ego_planner_node/tf_sfc/polyhedron_array
 默认输出：
 
 ```text
-$HOME/tf_sfc_results/ego/ego_runs_v3_drone_0.csv
-$HOME/tf_sfc_results/ego/ego_corridors_v3_drone_0.csv
+$HOME/tf_sfc_results/ego/ego_runs_v4_drone_0.csv
+$HOME/tf_sfc_results/ego/ego_corridors_v4_drone_0.csv
 ```
 
-- `ego_runs_v3_drone_<id>.csv`：每次优化调用一行，新增 `requested_method` 与 `method`，并包含状态、成功/无碰撞标志、规划与优化耗时、LBFGS 迭代、有效/失败分段数、首个失败原因、最终代价、轨迹时长和采样近似轨迹长度。
-- `ego_corridors_v3_drone_<id>.csv`：每个轨迹分段一行；有效段记录方法、面数、生成时间、宽度代理、样本余量和相邻重叠半径。A* seed 阶段会区分 `seed_start_invalid`、`seed_astar_failure`、`seed_path_outside_map`、`seed_path_occupied`；分解阶段还会记录 `outside_local_map`、`decomp_failure`、`overlap_too_small` 等原因。
+- `ego_runs_v4_drone_<id>.csv`：每次优化调用一行。除状态、耗时、迭代、走廊和轨迹指标外，新增 `goal_id/replan_id/attempt_id/touch_goal`，以及走廊约束段数、优化前后走廊惩罚和最大走廊越界量。统计时应先按 `goal_id` 聚合，不能把同一目标的快速重试当成独立实验；但 `goal_id` 聚合仍只是规划器结果，最终 mission success 还需要 FSM 到达/超时/碰撞日志。
+- `ego_corridors_v4_drone_<id>.csv`：每个轨迹分段一行；有效段记录方法、面数、生成时间、宽度代理、样本余量和相邻重叠半径。A* seed 阶段会区分 `seed_start_invalid`、`seed_astar_failure`、`seed_path_outside_map`、`seed_path_occupied`；分解阶段还会记录 `outside_local_map`、`piece_budget_tail`、`decomp_failure`、`overlap_too_small` 等原因。
 
 文件使用追加模式。不要在同一标签下混入不同地图或参数；建议每个场景使用独立目录或唯一 `tf_sfc_experiment_tag`。
 
 快速查看：
 
 ```bash
-head -n 5 $HOME/tf_sfc_results/ego/ego_runs_v3_drone_0.csv
-head -n 5 $HOME/tf_sfc_results/ego/ego_corridors_v3_drone_0.csv
+head -n 5 $HOME/tf_sfc_results/ego/ego_runs_v4_drone_0.csv
+head -n 5 $HOME/tf_sfc_results/ego/ego_corridors_v4_drone_0.csv
 ```
 
 ## 4. 当前可用于论文统计的字段
 
-当前可靠记录：成功率、collision-free rate、mean/p95/max planning time、优化耗时、走廊生成时间、LBFGS 迭代、最终目标值、轨迹时长、采样近似轨迹长度、重规划/反弹计数、面数、加权方向宽度、样本余量、重叠半径和回退率。
+当前可靠记录：优化调用成功率、规划器内部最终碰撞检查结果、mean/p95/max planning time、优化耗时、走廊生成时间、LBFGS 迭代、最终目标值、轨迹时长、采样近似轨迹长度、重规划/反弹计数、面数、加权方向宽度、样本余量、重叠半径和回退率。真实 mission success 与执行期 collision-free rate 仍需 FSM/仿真器独立记录，不能直接用单次 `success` 代替。
 
 当前 MVP 尚未严谨提供 corridor volume、Chebyshev radius、连续轨迹最小净空、真实 sensitivity Gramian、`alpha_max`、逐迭代 objective decrease 和严格 constraint count。发表实验前应在后续完整模块中实现这些量，不要用占位值代替。
 
@@ -186,7 +186,7 @@ head -n 5 $HOME/tf_sfc_results/ego/ego_corridors_v3_drone_0.csv
 下面的命令只使用 Python 标准库：
 
 ```bash
-python3 - $HOME/tf_sfc_results/ego/ego_runs_v3_drone_0.csv <<'PY'
+python3 - $HOME/tf_sfc_results/ego/ego_runs_v4_drone_0.csv <<'PY'
 import csv, math, statistics, sys
 
 rows = list(csv.DictReader(open(sys.argv[1], newline='')))
@@ -215,6 +215,9 @@ PY
 7. 对当前默认参数，局部地图横向半径为 `5.5 m`，规划视野为 `7.5 m`。设置 `allow_partial_corridors=false` 要求整个 7.5 m 轨迹都在 5.5 m 地图内，通常会得到 `outside_local_map`，不应作为默认实验配置。
 8. 当剩余轨迹只有 2 个 piece 时，局部前缀最多使用 1 个走廊 piece。实现会保留 A* 简化后的第一个最远可视段，其余路线继续由 EGO 的障碍代价和最终碰撞检查处理，避免在接近目标时出现快速 `insufficient_pieces` 重试。
 9. 正式对比时固定 `tf_sfc_decomp_overlap_extension`。建议主实验使用 `0.20 m`，并额外报告 `0 m` 消融，以判断成功率提升来自重叠构造还是其他参数变化。
+10. 当目标位于局部地图内但 A* 折点数超过短轨迹的 piece 预算时，实现会保留认证前缀，并把最后一段标记为 `piece_budget_tail`。该尾段只受原始 EGO 障碍代价和最终碰撞检查约束，必须在论文中与全走廊覆盖样本分开统计。
+
+论文最终实验前还需要完成的项目见 [ICRA_EXPERIMENT_READINESS.md](ICRA_EXPERIMENT_READINESS.md)。
 
 ## 7. 将 Liu et al. ICRA 2017 作为对比方法
 

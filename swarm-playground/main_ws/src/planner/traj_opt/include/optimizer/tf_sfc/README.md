@@ -32,6 +32,12 @@ EGO-Planner-v2's original rebound, restart, swarm, and final collision-check pat
 - EllipsoidDecomp dilates each seed segment independently. Collision-checked,
   tangent-aligned endpoint extensions give adjacent polytopes a larger shared
   interior while preserving the configured minimum-overlap certificate.
+- When a fully visible near-goal A* polyline has more bends than the remaining
+  MINCO piece budget, the optimizer keeps a certified prefix and labels the
+  unconstrained final segment `piece_budget_tail` instead of rapidly rejecting
+  every replan.
+- Schema-v4 experiment logs group optimizer calls by goal/replan/attempt and
+  record sampled corridor penalty and maximum violation before and after L-BFGS.
 - Configurable EGO fallback. Operational launches may allow fallback; strict
   experiments can reject generation failures instead of silently counting an
   original-EGO result as TF-SFC success.

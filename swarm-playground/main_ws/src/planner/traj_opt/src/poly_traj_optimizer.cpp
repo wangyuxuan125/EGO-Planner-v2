@@ -75,10 +75,12 @@ bool buildFixedPieceSeedPath(const GridMap::Ptr &grid_map,
                              const int min_valid_pieces,
                              ego_planner::tf_sfc::PointVector &seed_path,
                              int &covered_piece_num,
+                             ego_planner::tf_sfc::FailureReason &uncovered_failure_reason,
                              ego_planner::tf_sfc::FailureReason &failure_reason)
 {
   seed_path.clear();
   covered_piece_num = 0;
+  uncovered_failure_reason = ego_planner::tf_sfc::FailureReason::NONE;
   failure_reason = ego_planner::tf_sfc::FailureReason::INVALID_INPUT;
   if (!grid_map || !a_star || piece_num <= 0 || !start.allFinite() ||
       !finish.allFinite())
@@ -103,6 +105,7 @@ bool buildFixedPieceSeedPath(const GridMap::Ptr &grid_map,
   double coverage_ratio = 1.0;
   if (!full_coverage)
   {
+    uncovered_failure_reason = ego_planner::tf_sfc::FailureReason::OUTSIDE_LOCAL_MAP;
     if (!allow_partial_corridors || piece_num <= 1)
     {
       failure_reason = ego_planner::tf_sfc::FailureReason::OUTSIDE_LOCAL_MAP;
@@ -193,15 +196,31 @@ bool buildFixedPieceSeedPath(const GridMap::Ptr &grid_map,
   }
 
   int segment_count = static_cast<int>(simplified.size()) - 1;
-  const int max_covered_piece_num = full_coverage ? piece_num : piece_num - 1;
+  int max_covered_piece_num = full_coverage ? piece_num : piece_num - 1;
   if (segment_count <= 0 ||
       max_covered_piece_num < std::max(min_valid_pieces, 1))
   {
     failure_reason = ego_planner::tf_sfc::FailureReason::INSUFFICIENT_PIECES;
     return false;
   }
-  if (!full_coverage && segment_count > max_covered_piece_num)
+  if (segment_count > max_covered_piece_num && allow_partial_corridors &&
+      piece_num > 1)
   {
+    // Even when the goal is inside the rolling map, a short MINCO plan may
+    // have fewer pieces than the collision-free A* polyline has bends. Keep a
+    // certified prefix and leave one explicitly labelled tail piece to EGO's
+    // original obstacle penalty and final collision check.
+    if (full_coverage)
+    {
+      max_covered_piece_num = piece_num - 1;
+      uncovered_failure_reason =
+          ego_planner::tf_sfc::FailureReason::PIECE_BUDGET_TAIL;
+    }
+    if (max_covered_piece_num < std::max(min_valid_pieces, 1))
+    {
+      failure_reason = ego_planner::tf_sfc::FailureReason::INSUFFICIENT_PIECES;
+      return false;
+    }
     // A certified local prefix does not need to reach the rolling-map boundary.
     // Keep the farthest line-of-sight A* bends that fit the available prefix
     // pieces and leave the remaining route to EGO's original obstacle terms.
@@ -288,6 +307,7 @@ namespace ego_planner
     int total_lbfgs_iterations = 0;
     int last_lbfgs_result = 0;
     tf_sfc::CorridorVector logged_corridors;
+    tf_sfc::CorridorEvaluation initial_corridor_evaluation;
     multitopology_data_.initial_obstacles_avoided = false;
     wei_swarm_mod_ = wei_swarm_;
 
@@ -308,6 +328,8 @@ namespace ego_planner
       {
         tf_sfc::PointVector seed_path;
         int covered_piece_num = 0;
+        tf_sfc::FailureReason uncovered_failure_reason =
+            tf_sfc::FailureReason::NONE;
         tf_sfc::FailureReason seed_failure_reason = tf_sfc::FailureReason::NONE;
         if (!tf_sfc_manager_->ellipsoidDecompAvailable())
         {
@@ -321,6 +343,7 @@ namespace ego_planner
                                           tf_sfc_parameters_.allow_partial_corridors,
                                           tf_sfc_parameters_.min_valid_pieces,
                                           seed_path, covered_piece_num,
+                                          uncovered_failure_reason,
                                           seed_failure_reason))
         {
           tf_sfc::Corridor failed;
@@ -338,6 +361,7 @@ namespace ego_planner
           }
           corridor_ok = tf_sfc_manager_->generateEllipsoidDecomp(seed_path,
                                                                   piece_num_,
+                                                                  uncovered_failure_reason,
                                                                   tf_corridors_);
         }
       }
@@ -388,6 +412,10 @@ namespace ego_planner
           record.method = requested_corridor_method;
           record.timestamp_s = t0.toSec();
           record.drone_id = drone_id_;
+          record.goal_id = experiment_goal_id_;
+          record.replan_id = experiment_replan_id_;
+          record.attempt_id = experiment_attempt_id_;
+          record.touch_goal = touch_goal_;
           record.tf_sfc_enabled = true;
           record.direction_mode = requested_corridor_method == "obb"
                                       ? static_cast<int>(tf_sfc_parameters_.direction_mode)
@@ -437,6 +465,15 @@ namespace ego_planner
         tf_corridors_.clear();
         ROS_WARN_THROTTLE(1.0, "TF-SFC generation failed; using the original EGO optimization.");
       }
+    }
+
+    if (tf_sfc_generated && !fallback_to_ego && tf_sfc_manager_)
+    {
+      // Snapshot the exact trajectory used to initialize L-BFGS after A* seed
+      // replacement and optional junction projection.
+      jerkOpt_.generate(guidedInnerPts, initT);
+      initial_corridor_evaluation =
+          tf_sfc_manager_->evaluateTrajectory(jerkOpt_.getTraj());
     }
 
     variable_num_ = 4 * (piece_num_ - 1) + 1;
@@ -563,6 +600,10 @@ namespace ego_planner
       record.requested_method = requested_corridor_method;
       record.method = fallback_to_ego ? "ego" : requested_corridor_method;
       record.drone_id = drone_id_;
+      record.goal_id = experiment_goal_id_;
+      record.replan_id = experiment_replan_id_;
+      record.attempt_id = experiment_attempt_id_;
+      record.touch_goal = touch_goal_;
       record.tf_sfc_enabled = tf_sfc_parameters_.enabled;
       record.direction_mode = requested_corridor_method == "obb"
                                   ? static_cast<int>(tf_sfc_parameters_.direction_mode)
@@ -582,6 +623,22 @@ namespace ego_planner
       record.piece_count = piece_num_;
       record.final_cost = final_cost;
       const poly_traj::Trajectory &result_trajectory = jerkOpt_.getTraj();
+      tf_sfc::CorridorEvaluation final_corridor_evaluation;
+      if (tf_sfc_generated && !fallback_to_ego && tf_sfc_manager_)
+      {
+        final_corridor_evaluation =
+            tf_sfc_manager_->evaluateTrajectory(result_trajectory);
+      }
+      record.corridor_constrained_piece_count =
+          initial_corridor_evaluation.constrained_piece_count;
+      record.corridor_penalty_cost_initial =
+          initial_corridor_evaluation.penalty_cost;
+      record.corridor_penalty_cost_final =
+          final_corridor_evaluation.penalty_cost;
+      record.max_corridor_violation_initial_m =
+          initial_corridor_evaluation.max_violation_m;
+      record.max_corridor_violation_final_m =
+          final_corridor_evaluation.max_violation_m;
       record.trajectory_duration_s = result_trajectory.getPieceNum() > 0
                                          ? result_trajectory.getTotalDuration()
                                          : std::numeric_limits<double>::quiet_NaN();
@@ -2338,6 +2395,15 @@ namespace ego_planner
   void PolyTrajOptimizer::setDroneId(const int drone_id) { drone_id_ = drone_id; }
 
   void PolyTrajOptimizer::setIfTouchGoal(const bool touch_goal) { touch_goal_ = touch_goal; }
+
+  void PolyTrajOptimizer::setExperimentContext(const std::uint64_t goal_id,
+                                               const std::uint64_t replan_id,
+                                               const int attempt_id)
+  {
+    experiment_goal_id_ = goal_id;
+    experiment_replan_id_ = replan_id;
+    experiment_attempt_id_ = attempt_id;
+  }
 
   void PolyTrajOptimizer::setConstraintPoints(ConstraintPoints cps) { cps_ = cps; }
 

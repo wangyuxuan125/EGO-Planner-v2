@@ -58,7 +58,8 @@ enum class FailureReason
   SEED_START_INVALID = 11,
   SEED_ASTAR_FAILURE = 12,
   SEED_PATH_OUTSIDE_MAP = 13,
-  SEED_PATH_OCCUPIED = 14
+  SEED_PATH_OCCUPIED = 14,
+  PIECE_BUDGET_TAIL = 15
 };
 
 inline const char *failureReasonName(const FailureReason reason)
@@ -80,6 +81,7 @@ inline const char *failureReasonName(const FailureReason reason)
   case FailureReason::SEED_ASTAR_FAILURE: return "seed_astar_failure";
   case FailureReason::SEED_PATH_OUTSIDE_MAP: return "seed_path_outside_map";
   case FailureReason::SEED_PATH_OCCUPIED: return "seed_path_occupied";
+  case FailureReason::PIECE_BUDGET_TAIL: return "piece_budget_tail";
   }
   return "unknown";
 }
@@ -137,6 +139,13 @@ struct CorridorMetrics
   bool valid = false;
   bool direction_fallback = false;
   FailureReason failure_reason = FailureReason::NONE;
+};
+
+struct CorridorEvaluation
+{
+  int constrained_piece_count = 0;
+  double penalty_cost = 0.0;
+  double max_violation_m = 0.0;
 };
 
 // Each row of hpoly stores [n_x, n_y, n_z, b] for n.dot(x) <= b.

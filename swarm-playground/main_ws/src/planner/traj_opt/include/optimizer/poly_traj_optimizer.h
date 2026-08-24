@@ -5,6 +5,7 @@
 #include <path_searching/dyn_a_star.h>
 #include <plan_env/grid_map.h>
 #include <ros/ros.h>
+#include <cstdint>
 #include <memory>
 #include "optimizer/lbfgs.hpp"
 #include "optimizer/tf_sfc/experiment_logger.h"
@@ -87,6 +88,9 @@ namespace ego_planner
     int iter_num_;           // iteration of the solver
     std::vector<double> min_ellip_dist2_; // min trajectory distance in swarm
     bool touch_goal_;
+    std::uint64_t experiment_goal_id_{0};
+    std::uint64_t experiment_replan_id_{0};
+    int experiment_attempt_id_{0};
     struct MultitopologyData_t
     {
       bool use_multitopology_trajs{false}; 
@@ -131,6 +135,9 @@ namespace ego_planner
     void setSwarmTrajs(SwarmTrajData *swarm_trajs_ptr);
     void setDroneId(const int drone_id);
     void setIfTouchGoal(const bool touch_goal);
+    void setExperimentContext(std::uint64_t goal_id,
+                              std::uint64_t replan_id,
+                              int attempt_id);
     void setConstraintPoints(ConstraintPoints cps);
     void setUseMultitopologyTrajs(bool use_multitopology_trajs);
 

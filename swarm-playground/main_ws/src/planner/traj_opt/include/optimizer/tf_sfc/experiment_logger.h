@@ -20,6 +20,10 @@ struct ExperimentRunRecord
   std::string method = "obb";
   double timestamp_s = 0.0;
   int drone_id = -1;
+  std::uint64_t goal_id = 0;
+  std::uint64_t replan_id = 0;
+  int attempt_id = 0;
+  bool touch_goal = false;
   bool tf_sfc_enabled = false;
   int direction_mode = 1;
   bool success = false;
@@ -44,6 +48,11 @@ struct ExperimentRunRecord
   double min_sample_slack = 0.0;
   double min_overlap_radius = 0.0;
   int direction_fallback_count = 0;
+  int corridor_constrained_piece_count = 0;
+  double corridor_penalty_cost_initial = 0.0;
+  double corridor_penalty_cost_final = 0.0;
+  double max_corridor_violation_initial_m = 0.0;
+  double max_corridor_violation_final_m = 0.0;
   double final_cost = 0.0;
   double trajectory_duration_s = 0.0;
   double trajectory_length_m_sampled = 0.0;
