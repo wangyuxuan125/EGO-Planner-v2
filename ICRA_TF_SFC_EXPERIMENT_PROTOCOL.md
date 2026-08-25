@@ -40,10 +40,14 @@ ldd devel/lib/ego_planner/ego_planner_node | grep traj_opt
 strings devel/lib/libtraj_opt.so | grep face_budget_exhausted
 ```
 
-## Strict simulation commands
+## Local-planner simulation commands
 
 Use the same `map_seed`, start, goal, dynamics, sensing range and trial timeout
-for all rows. Paper runs must disable both partial coverage and planner fallback.
+for all rows. EGO has a 7.5 m planning horizon but a 5.5 m rolling-map update
+range in the single-drone demo. Requiring every horizon piece to lie in the
+current local map is therefore structurally impossible near the map frontier.
+Use certified-prefix mode for the online local planner, but keep EGO fallback
+disabled. All corridor methods use the same existing A* seed builder.
 
 Proposed, 12-face budget:
 
@@ -55,7 +59,7 @@ roslaunch ego_planner single_drone_interactive.launch \
   tf_sfc_direction_mode:=1 \
   tf_sfc_max_faces:=12 \
   tf_sfc_max_obs_faces:=6 \
-  tf_sfc_allow_partial_corridors:=false \
+  tf_sfc_allow_partial_corridors:=true \
   tf_sfc_allow_ego_fallback:=false \
   tf_sfc_hard_corridor_parameterization:=true \
   tf_sfc_use_soft_penalty:=true \
@@ -67,7 +71,7 @@ OBB-PCA baseline:
 ```bash
 roslaunch ego_planner single_drone_interactive.launch \
   map_seed:=42 tf_sfc_enabled:=true tf_sfc_corridor_method:=obb \
-  tf_sfc_direction_mode:=1 tf_sfc_allow_partial_corridors:=false \
+  tf_sfc_direction_mode:=1 tf_sfc_allow_partial_corridors:=true \
   tf_sfc_allow_ego_fallback:=false \
   tf_sfc_hard_corridor_parameterization:=true \
   tf_sfc_use_soft_penalty:=true \
@@ -80,7 +84,7 @@ Liu baseline:
 roslaunch ego_planner single_drone_interactive.launch \
   map_seed:=42 tf_sfc_enabled:=true \
   tf_sfc_corridor_method:=ellipsoid_decomp \
-  tf_sfc_allow_partial_corridors:=false \
+  tf_sfc_allow_partial_corridors:=true \
   tf_sfc_allow_ego_fallback:=false \
   tf_sfc_hard_corridor_parameterization:=true \
   tf_sfc_use_soft_penalty:=true \
@@ -101,19 +105,25 @@ method per seed.
 
 ## Recorded metrics and validity gates
 
-Schema v10 writes `ego_runs_v10_drone_0.csv` and
-`ego_corridors_v10_drone_0.csv`. The corridor file adds
+Schema v11 writes `ego_runs_v11_drone_0.csv` and
+`ego_corridors_v11_drone_0.csv`. The corridor file adds
 `obstacle_face_count`, `obstacle_point_count`,
 `face_budget_saturated`, and `anchor_clearance_radius`.
 
-A paper-valid strict planning sample must satisfy all of:
+A paper-valid online-local-planner sample must satisfy all of:
 
 - `success == 1`, `collision_free == 1`, and `fallback_to_ego == 0`;
-- `corridor_count == piece_count` and `failed_piece_count == 0`;
+- the valid corridors form one consecutive prefix and
+  `corridor_count >= min_valid_pieces`;
 - `hard_parameterization_active == 1`;
 - `max_corridor_violation_final_m <= max_final_violation_allowed_m`;
-- every corridor is valid, respects the face budget, and has
-  `overlap_radius_to_next >= min_overlap_radius`.
+- every valid prefix corridor respects the face budget and each valid adjacent
+  pair has `overlap_radius_to_next >= min_overlap_radius`.
+
+Report the certified-prefix coverage ratio separately. Do not present it as
+full-horizon containment. A later mission logger must verify that replanning
+occurs before the vehicle reaches the unconstrained tail. Offline/full-map
+corridor experiments may additionally require full piece coverage.
 
 Report planning-attempt success separately from mission success. Mission success
 requires reaching the commanded goal within the timeout with no collision,
@@ -136,3 +146,13 @@ claim, because the optimizer does not yet populate per-piece sensitivity
 Gramians. It also does not yet provide an FSM-level mission CSV or continuous
 polynomial containment certificate. Those are required before final paper data
 collection.
+
+
+## v11 seed correction
+
+The v10 proposed run generated valid corridors for the first one to three
+pieces, then failed because EGO's ordinary initial MINCO trajectory crossed
+inflated occupancy. This is expected for the original rebound optimizer but is
+invalid as an SFC seed. From v11, OBB and proposed TF-SFC reuse the existing
+collision-free A* seed builder already used by the Liu baseline. The optimizer
+itself is unchanged, and search timing/coverage remain separately logged.
