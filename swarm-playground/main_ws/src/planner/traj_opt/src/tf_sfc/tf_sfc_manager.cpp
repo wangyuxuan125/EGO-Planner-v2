@@ -129,6 +129,115 @@ bool TfSfcManager::generate(const poly_traj::Trajectory &trajectory,
          (parameters_.allow_partial_corridors || valid_count == trajectory.getPieceNum());
 }
 
+
+bool TfSfcManager::generateFromSeedPath(
+    const poly_traj::Trajectory &direction_trajectory,
+    const PointVector &seed_path,
+    const FailureReason uncovered_failure_reason,
+    CorridorVector &corridors)
+{
+  corridors.clear();
+  corridors_.clear();
+  const int trajectory_piece_count = direction_trajectory.getPieceNum();
+  const int seed_piece_count = static_cast<int>(seed_path.size()) - 1;
+  if (!grid_map_ || trajectory_piece_count <= 0 || seed_piece_count <= 0 ||
+      seed_piece_count > trajectory_piece_count || parameters_.max_faces < 6)
+  {
+    return false;
+  }
+
+  corridors.resize(trajectory_piece_count);
+  int valid_count = 0;
+  bool prefix_active = true;
+  for (int piece_id = 0; piece_id < trajectory_piece_count; ++piece_id)
+  {
+    Corridor &corridor = corridors[piece_id];
+    corridor.metrics.piece_id = piece_id;
+    if (!prefix_active)
+    {
+      corridor.metrics.failure_reason = FailureReason::SKIPPED_AFTER_FAILURE;
+      continue;
+    }
+    if (piece_id >= seed_piece_count)
+    {
+      corridor.metrics.failure_reason =
+          uncovered_failure_reason != FailureReason::NONE
+              ? uncovered_failure_reason
+              : FailureReason::PIECE_BUDGET_TAIL;
+      prefix_active = false;
+      continue;
+    }
+
+    const Eigen::Vector3d &segment_start = seed_path[piece_id];
+    const Eigen::Vector3d &segment_finish = seed_path[piece_id + 1];
+    if (!segment_start.allFinite() || !segment_finish.allFinite())
+    {
+      corridor.metrics.failure_reason = FailureReason::INVALID_INPUT;
+      prefix_active = false;
+      continue;
+    }
+
+    const auto started = std::chrono::steady_clock::now();
+    const poly_traj::Piece &direction_piece = direction_trajectory[piece_id];
+    const PointVector samples = sampleSegment(segment_start, segment_finish);
+    DirectionSet directions;
+    directions.requested_mode = parameters_.direction_mode;
+    if (!computeDirections(direction_piece, samples, piece_id, directions))
+    {
+      corridor.metrics.failure_reason = FailureReason::DIRECTION_FAILURE;
+      prefix_active = false;
+      continue;
+    }
+
+    FailureReason failure_reason = FailureReason::NONE;
+    const bool inflated = inflator_.inflate(
+        samples, directions, grid_map_->getResolution(),
+        [this](const Eigen::Vector3d &point) {
+          if (!grid_map_->isInInflatedMap(point))
+          {
+            return DirectionalInflator::SpaceState::OUTSIDE_MAP;
+          }
+          return grid_map_->getInflateOccupancy(point) != 0
+                     ? DirectionalInflator::SpaceState::OCCUPIED
+                     : DirectionalInflator::SpaceState::FREE;
+        },
+        corridor, failure_reason);
+    const auto finished = std::chrono::steady_clock::now();
+    corridor.metrics.generation_time_ms =
+        std::chrono::duration<double, std::milli>(finished - started).count();
+    if (!inflated)
+    {
+      corridor.metrics.failure_reason = failure_reason;
+      prefix_active = false;
+      continue;
+    }
+    corridor.metrics.failure_reason = FailureReason::NONE;
+
+    if (piece_id > 0 && corridors[piece_id - 1].metrics.valid)
+    {
+      const Eigen::Vector3d &junction = seed_path[piece_id];
+      const double radius =
+          overlapRadius(corridors[piece_id - 1], corridor, junction);
+      corridors[piece_id - 1].metrics.overlap_radius_to_next = radius;
+      if (radius + 1.0e-9 < parameters_.min_overlap_radius)
+      {
+        corridor.metrics.valid = false;
+        corridor.metrics.failure_reason = FailureReason::OVERLAP_TOO_SMALL;
+        prefix_active = false;
+        continue;
+      }
+    }
+    ++valid_count;
+  }
+
+  corridors_ = corridors;
+  const bool enough_valid =
+      valid_count >= std::max(parameters_.min_valid_pieces, 1);
+  return enough_valid &&
+         (parameters_.allow_partial_corridors ||
+          valid_count == trajectory_piece_count);
+}
+
 bool TfSfcManager::ellipsoidDecompAvailable() const
 {
 #ifdef TF_SFC_WITH_DECOMP_UTIL
@@ -661,6 +770,22 @@ PointVector TfSfcManager::samplePiece(const poly_traj::Piece &piece) const
   {
     samples.push_back(piece.getPos(piece.getDuration() * static_cast<double>(i) /
                                    static_cast<double>(count)));
+  }
+  return samples;
+}
+
+PointVector TfSfcManager::sampleSegment(
+    const Eigen::Vector3d &start,
+    const Eigen::Vector3d &finish) const
+{
+  const int count = std::max(parameters_.samples_per_piece, 2);
+  PointVector samples;
+  samples.reserve(count + 1);
+  for (int i = 0; i <= count; ++i)
+  {
+    const double ratio =
+        static_cast<double>(i) / static_cast<double>(count);
+    samples.push_back(start + ratio * (finish - start));
   }
   return samples;
 }
