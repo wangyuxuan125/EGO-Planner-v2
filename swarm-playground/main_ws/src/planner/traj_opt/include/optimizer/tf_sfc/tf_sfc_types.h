@@ -89,7 +89,7 @@ inline const char *failureReasonName(const FailureReason reason)
 struct Parameters
 {
   bool enabled = false;
-  bool use_projection = false;
+  bool use_projection = true;
   bool use_soft_penalty = false;
   bool allow_partial_corridors = true;
   bool allow_ego_fallback = true;
@@ -112,13 +112,17 @@ struct Parameters
   double max_inflation_distance = 1.0;
   double inflation_step = 0.10;
   double weight = 1000.0;
-  double enforcement_weight_multiplier = 10.0;
+  double enforcement_weight_multiplier = 3.0;
+  double enforcement_min_improvement = 1.0e-5;
   double max_final_violation = 1.0e-3;
   double penalty_epsilon = 0.02;
   double decomp_local_bbox_forward = 0.5;
   double decomp_local_bbox_lateral = 1.0;
   double decomp_local_bbox_vertical = 1.0;
   double decomp_overlap_extension = 0.20;
+  double decomp_initial_velocity_segment = 0.40;
+  double decomp_initial_velocity_threshold = 0.20;
+  double decomp_degenerate_seed_length = 0.10;
 };
 
 struct DirectionSet

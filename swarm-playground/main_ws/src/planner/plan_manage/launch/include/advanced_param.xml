@@ -35,13 +35,14 @@
     <arg name="drone_id"/>
     <arg name="tf_sfc_enabled" default="false"/>
     <arg name="tf_sfc_corridor_method" default="obb"/>
-    <arg name="tf_sfc_use_projection" default="false"/>
+    <arg name="tf_sfc_use_projection" default="true"/>
     <arg name="tf_sfc_use_soft_penalty" default="true"/>
     <arg name="tf_sfc_allow_partial_corridors" default="true"/>
     <arg name="tf_sfc_allow_ego_fallback" default="false"/>
     <arg name="tf_sfc_enforce_final_corridor" default="true"/>
     <arg name="tf_sfc_max_enforcement_passes" default="2"/>
-    <arg name="tf_sfc_enforcement_weight_multiplier" default="10.0"/>
+    <arg name="tf_sfc_enforcement_weight_multiplier" default="3.0"/>
+    <arg name="tf_sfc_enforcement_min_improvement" default="0.00001"/>
     <arg name="tf_sfc_max_final_violation" default="0.001"/>
     <arg name="tf_sfc_visualization_enabled" default="true"/>
     <arg name="tf_sfc_visualization_frame" default="world"/>
@@ -56,6 +57,9 @@
     <arg name="tf_sfc_decomp_local_bbox_lateral" default="1.0"/>
     <arg name="tf_sfc_decomp_local_bbox_vertical" default="1.0"/>
     <arg name="tf_sfc_decomp_overlap_extension" default="0.20"/>
+    <arg name="tf_sfc_decomp_initial_velocity_segment" default="0.40"/>
+    <arg name="tf_sfc_decomp_initial_velocity_threshold" default="0.20"/>
+    <arg name="tf_sfc_decomp_degenerate_seed_length" default="0.10"/>
     <!-- main node -->
     <!-- <node pkg="ego_planner" name="ego_planner_node" type="ego_planner_node" output="screen" launch-prefix="valgrind"> -->
     <node pkg="ego_planner" name="drone_$(arg drone_id)_ego_planner_node" type="ego_planner_node" output="screen">
@@ -168,6 +172,7 @@
         <param name="tf_sfc/enforce_final_corridor" value="$(arg tf_sfc_enforce_final_corridor)" type="bool"/>
         <param name="tf_sfc/max_enforcement_passes" value="$(arg tf_sfc_max_enforcement_passes)" type="int"/>
         <param name="tf_sfc/enforcement_weight_multiplier" value="$(arg tf_sfc_enforcement_weight_multiplier)" type="double"/>
+        <param name="tf_sfc/enforcement_min_improvement" value="$(arg tf_sfc_enforcement_min_improvement)" type="double"/>
         <param name="tf_sfc/max_final_violation" value="$(arg tf_sfc_max_final_violation)" type="double"/>
         <param name="tf_sfc/visualization_enabled" value="$(arg tf_sfc_visualization_enabled)" type="bool"/>
         <param name="tf_sfc/visualization_frame" value="$(arg tf_sfc_visualization_frame)" type="string"/>
@@ -189,5 +194,8 @@
         <param name="tf_sfc/decomp_local_bbox_lateral" value="$(arg tf_sfc_decomp_local_bbox_lateral)" type="double"/>
         <param name="tf_sfc/decomp_local_bbox_vertical" value="$(arg tf_sfc_decomp_local_bbox_vertical)" type="double"/>
         <param name="tf_sfc/decomp_overlap_extension" value="$(arg tf_sfc_decomp_overlap_extension)" type="double"/>
+        <param name="tf_sfc/decomp_initial_velocity_segment" value="$(arg tf_sfc_decomp_initial_velocity_segment)" type="double"/>
+        <param name="tf_sfc/decomp_initial_velocity_threshold" value="$(arg tf_sfc_decomp_initial_velocity_threshold)" type="double"/>
+        <param name="tf_sfc/decomp_degenerate_seed_length" value="$(arg tf_sfc_decomp_degenerate_seed_length)" type="double"/>
     </node>
 </launch>

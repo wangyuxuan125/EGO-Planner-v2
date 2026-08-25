@@ -24,6 +24,8 @@ struct ExperimentRunRecord
   std::uint64_t replan_id = 0;
   int attempt_id = 0;
   bool touch_goal = false;
+  std::string seed_path_strategy = "not_applicable";
+  bool initial_velocity_seed_used = false;
   bool tf_sfc_enabled = false;
   int direction_mode = 1;
   bool success = false;
@@ -59,6 +61,11 @@ struct ExperimentRunRecord
   double corridor_penalty_weight_initial = 0.0;
   double corridor_penalty_weight_final = 0.0;
   bool strict_corridor_rejected = false;
+  int corridor_candidate_count = 0;
+  int corridor_candidate_accept_count = 0;
+  bool corridor_rollback_applied = false;
+  std::string corridor_rollback_reason = "none";
+  double best_corridor_violation_m = 0.0;
   double final_cost = 0.0;
   double trajectory_duration_s = 0.0;
   double trajectory_length_m_sampled = 0.0;

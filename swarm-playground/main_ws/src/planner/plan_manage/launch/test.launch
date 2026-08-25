@@ -135,13 +135,14 @@
 
         <!-- TF-SFC MVP: disabled by default; 0=Frenet, 1=PCA, 2=sensitivity Gramian. -->
         <param name="tf_sfc/enabled" value="false" type="bool"/>
-        <param name="tf_sfc/use_projection" value="false" type="bool"/>
+        <param name="tf_sfc/use_projection" value="true" type="bool"/>
         <param name="tf_sfc/use_soft_penalty" value="false" type="bool"/>
         <param name="tf_sfc/allow_partial_corridors" value="true" type="bool"/>
         <param name="tf_sfc/allow_ego_fallback" value="true" type="bool"/>
         <param name="tf_sfc/enforce_final_corridor" value="true" type="bool"/>
         <param name="tf_sfc/max_enforcement_passes" value="2" type="int"/>
-        <param name="tf_sfc/enforcement_weight_multiplier" value="10.0" type="double"/>
+        <param name="tf_sfc/enforcement_weight_multiplier" value="3.0" type="double"/>
+        <param name="tf_sfc/enforcement_min_improvement" value="0.00001" type="double"/>
         <param name="tf_sfc/max_final_violation" value="0.001" type="double"/>
         <param name="tf_sfc/visualization_enabled" value="true" type="bool"/>
         <param name="tf_sfc/visualization_frame" value="world" type="string"/>
@@ -153,6 +154,9 @@
         <param name="tf_sfc/max_faces" value="12" type="int"/>
         <param name="tf_sfc/samples_per_piece" value="8" type="int"/>
         <param name="tf_sfc/projection_passes" value="4" type="int"/>
+        <param name="tf_sfc/decomp_initial_velocity_segment" value="0.40" type="double"/>
+        <param name="tf_sfc/decomp_initial_velocity_threshold" value="0.20" type="double"/>
+        <param name="tf_sfc/decomp_degenerate_seed_length" value="0.10" type="double"/>
         <param name="tf_sfc/safety_margin" value="0.25" type="double"/>
         <param name="tf_sfc/min_overlap_radius" value="0.15" type="double"/>
         <param name="tf_sfc/max_inflation_distance" value="1.0" type="double"/>

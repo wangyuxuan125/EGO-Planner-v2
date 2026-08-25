@@ -28,13 +28,14 @@
     <arg name="odom_topic"/>
     <arg name="tf_sfc_enabled" default="false"/>
     <arg name="tf_sfc_corridor_method" default="obb"/>
-    <arg name="tf_sfc_use_projection" default="false"/>
+    <arg name="tf_sfc_use_projection" default="true"/>
     <arg name="tf_sfc_use_soft_penalty" default="true"/>
     <arg name="tf_sfc_allow_partial_corridors" default="true"/>
     <arg name="tf_sfc_allow_ego_fallback" default="false"/>
     <arg name="tf_sfc_enforce_final_corridor" default="true"/>
     <arg name="tf_sfc_max_enforcement_passes" default="2"/>
-    <arg name="tf_sfc_enforcement_weight_multiplier" default="10.0"/>
+    <arg name="tf_sfc_enforcement_weight_multiplier" default="3.0"/>
+    <arg name="tf_sfc_enforcement_min_improvement" default="0.00001"/>
     <arg name="tf_sfc_max_final_violation" default="0.001"/>
     <arg name="tf_sfc_visualization_enabled" default="true"/>
     <arg name="tf_sfc_visualization_frame" default="world"/>
@@ -49,6 +50,9 @@
     <arg name="tf_sfc_decomp_local_bbox_lateral" default="1.0"/>
     <arg name="tf_sfc_decomp_local_bbox_vertical" default="1.0"/>
     <arg name="tf_sfc_decomp_overlap_extension" default="0.20"/>
+    <arg name="tf_sfc_decomp_initial_velocity_segment" default="0.40"/>
+    <arg name="tf_sfc_decomp_initial_velocity_threshold" default="0.20"/>
+    <arg name="tf_sfc_decomp_degenerate_seed_length" default="0.10"/>
     <!-- main algorithm params -->
     <include file="$(find ego_planner)/launch/include/advanced_param.xml">
         <arg name="drone_id" value="$(arg drone_id)"/>
@@ -85,6 +89,7 @@
         <arg name="tf_sfc_enforce_final_corridor" value="$(arg tf_sfc_enforce_final_corridor)"/>
         <arg name="tf_sfc_max_enforcement_passes" value="$(arg tf_sfc_max_enforcement_passes)"/>
         <arg name="tf_sfc_enforcement_weight_multiplier" value="$(arg tf_sfc_enforcement_weight_multiplier)"/>
+        <arg name="tf_sfc_enforcement_min_improvement" value="$(arg tf_sfc_enforcement_min_improvement)"/>
         <arg name="tf_sfc_max_final_violation" value="$(arg tf_sfc_max_final_violation)"/>
         <arg name="tf_sfc_visualization_enabled" value="$(arg tf_sfc_visualization_enabled)"/>
         <arg name="tf_sfc_visualization_frame" value="$(arg tf_sfc_visualization_frame)"/>
@@ -99,6 +104,9 @@
         <arg name="tf_sfc_decomp_local_bbox_lateral" value="$(arg tf_sfc_decomp_local_bbox_lateral)"/>
         <arg name="tf_sfc_decomp_local_bbox_vertical" value="$(arg tf_sfc_decomp_local_bbox_vertical)"/>
         <arg name="tf_sfc_decomp_overlap_extension" value="$(arg tf_sfc_decomp_overlap_extension)"/>
+        <arg name="tf_sfc_decomp_initial_velocity_segment" value="$(arg tf_sfc_decomp_initial_velocity_segment)"/>
+        <arg name="tf_sfc_decomp_initial_velocity_threshold" value="$(arg tf_sfc_decomp_initial_velocity_threshold)"/>
+        <arg name="tf_sfc_decomp_degenerate_seed_length" value="$(arg tf_sfc_decomp_degenerate_seed_length)"/>
         <!-- 1: use 2D Nav Goal to select goal  -->
         <!-- 2: use global waypoints below  -->
         <arg name="flight_type" value="$(arg flight_type)" />

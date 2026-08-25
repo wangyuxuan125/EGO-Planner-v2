@@ -66,24 +66,36 @@ ego_planner::tf_sfc::FailureReason segmentFailureReason(const SegmentState state
   return ego_planner::tf_sfc::FailureReason::SEED_PATH_FAILURE;
 }
 
+struct SeedPathBuildInfo
+{
+  std::string strategy = "astar";
+  bool initial_velocity_seed_used = false;
+};
+
 bool buildFixedPieceSeedPath(const GridMap::Ptr &grid_map,
                              const AStar::Ptr &a_star,
                              const Eigen::Vector3d &start,
+                             const Eigen::Vector3d &start_velocity,
                              const Eigen::Vector3d &finish,
                              const int piece_num,
                              const bool allow_partial_corridors,
                              const int min_valid_pieces,
+                             const double initial_velocity_segment_length,
+                             const double initial_velocity_threshold,
+                             const double degenerate_seed_length,
                              ego_planner::tf_sfc::PointVector &seed_path,
                              int &covered_piece_num,
                              ego_planner::tf_sfc::FailureReason &uncovered_failure_reason,
-                             ego_planner::tf_sfc::FailureReason &failure_reason)
+                             ego_planner::tf_sfc::FailureReason &failure_reason,
+                             SeedPathBuildInfo &build_info)
 {
   seed_path.clear();
+  build_info = SeedPathBuildInfo();
   covered_piece_num = 0;
   uncovered_failure_reason = ego_planner::tf_sfc::FailureReason::NONE;
   failure_reason = ego_planner::tf_sfc::FailureReason::INVALID_INPUT;
   if (!grid_map || !a_star || piece_num <= 0 || !start.allFinite() ||
-      !finish.allFinite())
+      !start_velocity.allFinite() || !finish.allFinite())
   {
     return false;
   }
@@ -156,25 +168,127 @@ bool buildFixedPieceSeedPath(const GridMap::Ptr &grid_map,
     }
   }
 
-  if (a_star->AstarSearch(grid_map->getResolution(), start, seed_finish, true) !=
-      ASTAR_RET::SUCCESS)
-  {
-    failure_reason = ego_planner::tf_sfc::FailureReason::SEED_ASTAR_FAILURE;
-    return false;
-  }
+  const double resolution = grid_map->getResolution();
+  const double seed_distance = (seed_finish - start).norm();
+  std::vector<Eigen::Vector3d> raw_path;
 
-  std::vector<Eigen::Vector3d> raw_path = a_star->getPath();
-  if (raw_path.empty())
+  // A* commonly collapses a same-voxel query to a zero-segment path. Preserve
+  // a real segment for DecompUtil, following Elastic-Tracker's short-path
+  // guard, but collision-check the direction instead of blindly adding +z.
+  if (seed_distance <= 1.5 * resolution &&
+      segmentState(grid_map, start, seed_finish) == SegmentState::FREE)
   {
-    failure_reason = ego_planner::tf_sfc::FailureReason::SEED_ASTAR_FAILURE;
-    return false;
+    if (seed_distance > 1.0e-6)
+    {
+      raw_path.push_back(start);
+      raw_path.push_back(seed_finish);
+      build_info.strategy = "direct_short_seed";
+    }
+    else
+    {
+      std::vector<Eigen::Vector3d> directions;
+      if (start_velocity.norm() > initial_velocity_threshold)
+      {
+        directions.push_back(start_velocity.normalized());
+      }
+      directions.push_back(Eigen::Vector3d::UnitX());
+      directions.push_back(-Eigen::Vector3d::UnitX());
+      directions.push_back(Eigen::Vector3d::UnitY());
+      directions.push_back(-Eigen::Vector3d::UnitY());
+      directions.push_back(Eigen::Vector3d::UnitZ());
+      directions.push_back(-Eigen::Vector3d::UnitZ());
+      const double probe_length = std::max(degenerate_seed_length, resolution);
+      bool found_probe = false;
+      for (const Eigen::Vector3d &direction : directions)
+      {
+        for (double scale = 1.0; scale >= 0.25; scale *= 0.5)
+        {
+          const Eigen::Vector3d candidate =
+              start + scale * probe_length * direction;
+          if (segmentState(grid_map, start, candidate) == SegmentState::FREE)
+          {
+            raw_path.push_back(start);
+            raw_path.push_back(candidate);
+            found_probe = true;
+            break;
+          }
+        }
+        if (found_probe)
+        {
+          break;
+        }
+      }
+      if (!found_probe)
+      {
+        failure_reason =
+            ego_planner::tf_sfc::FailureReason::INSUFFICIENT_PIECES;
+        return false;
+      }
+      build_info.strategy = "collision_checked_degenerate_probe";
+    }
   }
-  raw_path.front() = start;
-  raw_path.back() = seed_finish;
+  else
+  {
+    Eigen::Vector3d search_start = start;
+    if (start_velocity.norm() > initial_velocity_threshold &&
+        initial_velocity_segment_length > 0.0 && piece_num > 1)
+    {
+      const Eigen::Vector3d candidate =
+          start + initial_velocity_segment_length * start_velocity.normalized();
+      if ((candidate - seed_finish).norm() > 0.5 * resolution &&
+          segmentState(grid_map, start, candidate) == SegmentState::FREE)
+      {
+        search_start = candidate;
+        build_info.initial_velocity_seed_used = true;
+        build_info.strategy = "velocity_aligned_astar";
+      }
+    }
+
+    ASTAR_RET search_result =
+        a_star->AstarSearch(resolution, search_start, seed_finish, true);
+    if (search_result != ASTAR_RET::SUCCESS &&
+        build_info.initial_velocity_seed_used)
+    {
+      // A velocity-aligned prefix is a robustness aid, not a reason to lose an
+      // otherwise valid A* route.
+      build_info.initial_velocity_seed_used = false;
+      build_info.strategy = "astar_velocity_fallback";
+      search_start = start;
+      search_result =
+          a_star->AstarSearch(resolution, search_start, seed_finish, true);
+    }
+    if (search_result != ASTAR_RET::SUCCESS)
+    {
+      failure_reason = ego_planner::tf_sfc::FailureReason::SEED_ASTAR_FAILURE;
+      return false;
+    }
+
+    raw_path = a_star->getPath();
+    if (raw_path.empty())
+    {
+      failure_reason = ego_planner::tf_sfc::FailureReason::SEED_ASTAR_FAILURE;
+      return false;
+    }
+    raw_path.front() = search_start;
+    raw_path.back() = seed_finish;
+    if (build_info.initial_velocity_seed_used)
+    {
+      raw_path.insert(raw_path.begin(), start);
+    }
+    else
+    {
+      raw_path.front() = start;
+    }
+  }
 
   ego_planner::tf_sfc::PointVector simplified;
   simplified.push_back(raw_path.front());
   int current = 0;
+  if (build_info.initial_velocity_seed_used && raw_path.size() > 1)
+  {
+    simplified.push_back(raw_path[1]);
+    current = 1;
+  }
   while (current + 1 < static_cast<int>(raw_path.size()))
   {
     int next = static_cast<int>(raw_path.size()) - 1;
@@ -196,7 +310,8 @@ bool buildFixedPieceSeedPath(const GridMap::Ptr &grid_map,
   }
 
   int segment_count = static_cast<int>(simplified.size()) - 1;
-  int max_covered_piece_num = full_coverage ? piece_num : piece_num - 1;
+  const bool complete_corridor_budget = full_coverage;
+  int max_covered_piece_num = complete_corridor_budget ? piece_num : piece_num - 1;
   if (segment_count <= 0 ||
       max_covered_piece_num < std::max(min_valid_pieces, 1))
   {
@@ -210,7 +325,7 @@ bool buildFixedPieceSeedPath(const GridMap::Ptr &grid_map,
     // have fewer pieces than the collision-free A* polyline has bends. Keep a
     // certified prefix and leave one explicitly labelled tail piece to EGO's
     // original obstacle penalty and final collision check.
-    if (full_coverage)
+    if (complete_corridor_budget)
     {
       max_covered_piece_num = piece_num - 1;
       uncovered_failure_reason =
@@ -232,7 +347,7 @@ bool buildFixedPieceSeedPath(const GridMap::Ptr &grid_map,
     failure_reason = ego_planner::tf_sfc::FailureReason::INSUFFICIENT_PIECES;
     return false;
   }
-  const int proportional_piece_num = full_coverage
+  const int proportional_piece_num = complete_corridor_budget
                                          ? piece_num
                                          : std::max(1, static_cast<int>(std::floor(
                                                            piece_num * coverage_ratio)));
@@ -311,6 +426,13 @@ namespace ego_planner
     int last_lbfgs_result = 0;
     int corridor_enforcement_passes = 0;
     double corridor_penalty_scale = 1.0;
+    SeedPathBuildInfo seed_path_build_info;
+    int corridor_candidate_count = 0;
+    int corridor_candidate_accept_count = 0;
+    bool corridor_rollback_applied = false;
+    std::string corridor_rollback_reason = "none";
+    double best_corridor_violation_m =
+        std::numeric_limits<double>::infinity();
     tf_sfc::CorridorVector logged_corridors;
     tf_sfc::CorridorEvaluation initial_corridor_evaluation;
     multitopology_data_.initial_obstacles_avoided = false;
@@ -348,12 +470,16 @@ namespace ego_planner
           tf_corridors_.push_back(failed);
         }
         else if (!buildFixedPieceSeedPath(grid_map_, a_star_, iniState.col(0),
-                                          finState.col(0), piece_num_,
+                                          iniState.col(1), finState.col(0), piece_num_,
                                           tf_sfc_parameters_.allow_partial_corridors,
                                           tf_sfc_parameters_.min_valid_pieces,
+                                          tf_sfc_parameters_.decomp_initial_velocity_segment,
+                                          tf_sfc_parameters_.decomp_initial_velocity_threshold,
+                                          tf_sfc_parameters_.decomp_degenerate_seed_length,
                                           seed_path, covered_piece_num,
                                           uncovered_failure_reason,
-                                          seed_failure_reason))
+                                          seed_failure_reason,
+                                          seed_path_build_info))
         {
           tf_sfc::Corridor failed;
           failed.metrics.piece_id = 0;
@@ -425,6 +551,9 @@ namespace ego_planner
           record.replan_id = experiment_replan_id_;
           record.attempt_id = experiment_attempt_id_;
           record.touch_goal = touch_goal_;
+          record.seed_path_strategy = seed_path_build_info.strategy;
+          record.initial_velocity_seed_used =
+              seed_path_build_info.initial_velocity_seed_used;
           record.tf_sfc_enabled = true;
           record.direction_mode = requested_corridor_method == "obb"
                                       ? static_cast<int>(tf_sfc_parameters_.direction_mode)
@@ -492,6 +621,62 @@ namespace ego_planner
     RealT2VirtualT(initT, Vt);
     min_ellip_dist2_.resize(swarm_trajs_->size());
 
+    std::vector<double> best_corridor_x(variable_num_);
+    bool best_corridor_candidate_valid = false;
+    double best_corridor_cost = std::numeric_limits<double>::infinity();
+    auto regenerateTrajectoryFromDecision = [&](const double *decision) {
+      Eigen::Map<const Eigen::MatrixXd> inner_points(
+          decision, 3, piece_num_ - 1);
+      Eigen::Map<const Eigen::VectorXd> virtual_times(
+          decision + 3 * (piece_num_ - 1), piece_num_);
+      Eigen::VectorXd real_times(piece_num_);
+      VirtualT2RealT(virtual_times, real_times);
+      jerkOpt_.generate(inner_points, real_times);
+    };
+    auto trajectoryIsFinite = [&]() {
+      const poly_traj::Trajectory &trajectory = jerkOpt_.getTraj();
+      if (trajectory.getPieceNum() <= 0 ||
+          !std::isfinite(trajectory.getTotalDuration()) ||
+          trajectory.getTotalDuration() <= 0.0)
+      {
+        return false;
+      }
+      const int sample_count = std::max(
+          2, tf_sfc_parameters_.samples_per_piece * trajectory.getPieceNum());
+      for (int sample_id = 0; sample_id <= sample_count; ++sample_id)
+      {
+        const double time = trajectory.getTotalDuration() *
+                            static_cast<double>(sample_id) /
+                            static_cast<double>(sample_count);
+        if (!trajectory.getPos(time).allFinite() ||
+            !trajectory.getVel(time).allFinite() ||
+            !trajectory.getAcc(time).allFinite())
+        {
+          return false;
+        }
+      }
+      return true;
+    };
+    auto rememberCorridorCandidate = [&](const double violation) {
+      std::copy(x_init, x_init + variable_num_, best_corridor_x.begin());
+      best_corridor_candidate_valid = true;
+      best_corridor_cost = final_cost;
+      best_corridor_violation_m = violation;
+      ++corridor_candidate_accept_count;
+    };
+    auto rollbackCorridorCandidate = [&](const std::string &reason) {
+      if (!best_corridor_candidate_valid)
+      {
+        return false;
+      }
+      std::copy(best_corridor_x.begin(), best_corridor_x.end(), x_init);
+      regenerateTrajectoryFromDecision(x_init);
+      final_cost = best_corridor_cost;
+      corridor_rollback_applied = true;
+      corridor_rollback_reason = reason;
+      return true;
+    };
+
     // Preparision 3: LBFGS related params
     lbfgs::lbfgs_parameter_t lbfgs_params;
     lbfgs::lbfgs_load_default_parameters(&lbfgs_params);
@@ -539,6 +724,31 @@ namespace ego_planner
           result == lbfgs::LBFGS_STOP)
       {
         flag_force_return = false;
+        bool candidate_invalid = false;
+
+        const Eigen::Map<const Eigen::VectorXd> decision_vector(
+            x_init, variable_num_);
+        if (!decision_vector.allFinite())
+        {
+          if (rollbackCorridorCandidate("nonfinite_decision"))
+          {
+            final_collision_free = true;
+          }
+          strict_corridor_rejected = tf_sfc_generated && !fallback_to_ego;
+          candidate_invalid = true;
+          ROS_ERROR_THROTTLE(
+              1.0,
+              "Trajectory optimization produced a non-finite decision vector; "
+              "rejecting the candidate%s.",
+              corridor_rollback_applied ? " and restoring the best safe iterate" : "");
+        }
+        else
+        {
+          // The final callback evaluation is not guaranteed to coincide with
+          // the decision vector returned by L-BFGS. Regenerate explicitly so
+          // every safety and corridor check evaluates the exact candidate.
+          regenerateTrajectoryFromDecision(x_init);
+        }
 
         /* double check: fine collision check */
         std::vector<std::pair<int, int>> segments_nouse;
@@ -546,7 +756,21 @@ namespace ego_planner
         {
           flag_swarm_too_close |= min_ellip_dist2_[i] < pow((swarm_clearance_ + swarm_trajs_->at(i).des_clearance) * 1.25, 2);
         }
-        if (!flag_swarm_too_close)
+        if (!candidate_invalid && !trajectoryIsFinite())
+        {
+          if (rollbackCorridorCandidate("nonfinite_trajectory"))
+          {
+            final_collision_free = true;
+          }
+          strict_corridor_rejected = tf_sfc_generated && !fallback_to_ego;
+          candidate_invalid = true;
+          ROS_ERROR_THROTTLE(
+              1.0,
+              "Trajectory optimization produced a non-finite trajectory; "
+              "rejecting the candidate%s.",
+              corridor_rollback_applied ? " and restoring the best safe iterate" : "");
+        }
+        else if (!candidate_invalid && !flag_swarm_too_close)
         {
           if (finelyCheckAndSetConstraintPoints(segments_nouse, jerkOpt_, false) == CHK_RET::OBS_FREE)
           {
@@ -559,9 +783,39 @@ namespace ego_planner
             {
               enforcement_evaluation =
                   tf_sfc_manager_->evaluateTrajectory(jerkOpt_.getTraj());
+              ++corridor_candidate_count;
+
+              const bool first_safe_candidate =
+                  !best_corridor_candidate_valid;
+              const bool within_tolerance =
+                  enforcement_evaluation.max_violation_m <=
+                  tf_sfc_parameters_.max_final_violation;
+              const bool monotonically_improved =
+                  enforcement_evaluation.max_violation_m +
+                      tf_sfc_parameters_.enforcement_min_improvement <
+                  best_corridor_violation_m;
+              if (first_safe_candidate || within_tolerance ||
+                  monotonically_improved)
+              {
+                rememberCorridorCandidate(
+                    enforcement_evaluation.max_violation_m);
+              }
+              else
+              {
+                rollbackCorridorCandidate("violation_not_improved");
+                strict_corridor_rejected = true;
+                final_collision_free = true;
+                ROS_ERROR_THROTTLE(
+                    1.0,
+                    "TF-SFC continuation did not improve sampled violation "
+                    "(candidate %.6f m, best %.6f m); restoring the best safe "
+                    "iterate and rejecting this plan.",
+                    enforcement_evaluation.max_violation_m,
+                    best_corridor_violation_m);
+              }
             }
 
-            if (strict_check_enabled &&
+            if (!strict_corridor_rejected && strict_check_enabled &&
                 enforcement_evaluation.max_violation_m >
                     tf_sfc_parameters_.max_final_violation)
             {
@@ -590,6 +844,7 @@ namespace ego_planner
               }
               else
               {
+                rollbackCorridorCandidate("max_enforcement_passes");
                 strict_corridor_rejected = true;
                 ROS_ERROR_THROTTLE(
                     1.0,
@@ -600,7 +855,7 @@ namespace ego_planner
                     corridor_enforcement_passes);
               }
             }
-            else
+            else if (!strict_corridor_rejected)
             {
               flag_success = true;
               PRINTF_COND("\033[32miter=%d,time(ms)=%5.3f,total_t(ms)=%5.3f,cost=%5.3f\n\033[0m", iter_num_, time_ms, total_time_ms, final_cost);
@@ -608,6 +863,17 @@ namespace ego_planner
           }
           else
           {
+            if (corridor_enforcement_passes > 0 &&
+                rollbackCorridorCandidate("collision_candidate"))
+            {
+              final_collision_free = true;
+              strict_corridor_rejected = true;
+              ROS_ERROR_THROTTLE(
+                  1.0,
+                  "TF-SFC continuation produced a colliding candidate; "
+                  "restoring the best safe iterate and rejecting this plan.");
+              continue;
+            }
             // A not-blank return value means collision to obstales
             if (tf_sfc_manager_ &&
                 (!tf_sfc_generated || tf_sfc_parameters_.allow_ego_fallback))
@@ -621,8 +887,19 @@ namespace ego_planner
             PRINTF_COND("\033[32miter=%d,time(ms)=%5.3f, fine check collided, keep optimizing\n\033[0m", iter_num_, time_ms);
           }
         }
-        else
+        else if (!candidate_invalid)
         {
+          if (corridor_enforcement_passes > 0 &&
+              rollbackCorridorCandidate("swarm_clearance_candidate"))
+          {
+            final_collision_free = true;
+            strict_corridor_rejected = true;
+            ROS_ERROR_THROTTLE(
+                1.0,
+                "TF-SFC continuation violated swarm clearance; restoring the "
+                "best safe iterate and rejecting this plan.");
+            continue;
+          }
           PRINTF_COND("Swarm clearance not satisfied, keep optimizing. iter=%d,time(ms)=%5.3f, wei_swarm_mod_=%f\n", iter_num_, time_ms, wei_swarm_mod_);
           flag_still_unsafe = true;
           restart_nums++;
@@ -631,6 +908,17 @@ namespace ego_planner
       }
       else if (result == lbfgs::LBFGSERR_CANCELED)
       {
+        if (corridor_enforcement_passes > 0 &&
+            rollbackCorridorCandidate("solver_cancelled"))
+        {
+          final_collision_free = true;
+          strict_corridor_rejected = true;
+          ROS_ERROR_THROTTLE(
+              1.0,
+              "TF-SFC continuation was cancelled; restoring the best safe "
+              "iterate and rejecting this plan.");
+          continue;
+        }
         if (tf_sfc_manager_ &&
             (!tf_sfc_generated || tf_sfc_parameters_.allow_ego_fallback))
         {
@@ -644,6 +932,17 @@ namespace ego_planner
       }
       else
       {
+        if (corridor_enforcement_passes > 0 &&
+            rollbackCorridorCandidate("solver_error"))
+        {
+          final_collision_free = true;
+          strict_corridor_rejected = true;
+          ROS_ERROR_THROTTLE(
+              1.0,
+              "TF-SFC continuation failed in L-BFGS; restoring the best safe "
+              "iterate and rejecting this plan.");
+          continue;
+        }
         PRINTF_COND("iter=%d, time(ms)=%f, error\n", iter_num_, time_ms);
         ROS_WARN_COND(VERBOSE_OUTPUT, "Solver error. Return = %d, %s. Skip this planning.", result, lbfgs::lbfgs_strerror(result));
       }
@@ -669,6 +968,9 @@ namespace ego_planner
       record.replan_id = experiment_replan_id_;
       record.attempt_id = experiment_attempt_id_;
       record.touch_goal = touch_goal_;
+      record.seed_path_strategy = seed_path_build_info.strategy;
+      record.initial_velocity_seed_used =
+          seed_path_build_info.initial_velocity_seed_used;
       record.tf_sfc_enabled = tf_sfc_parameters_.enabled;
       record.direction_mode = requested_corridor_method == "obb"
                                   ? static_cast<int>(tf_sfc_parameters_.direction_mode)
@@ -721,6 +1023,15 @@ namespace ego_planner
               ? tf_sfc_parameters_.weight * corridor_penalty_scale
               : 0.0;
       record.strict_corridor_rejected = strict_corridor_rejected;
+      record.corridor_candidate_count = corridor_candidate_count;
+      record.corridor_candidate_accept_count =
+          corridor_candidate_accept_count;
+      record.corridor_rollback_applied = corridor_rollback_applied;
+      record.corridor_rollback_reason = corridor_rollback_reason;
+      record.best_corridor_violation_m =
+          std::isfinite(best_corridor_violation_m)
+              ? best_corridor_violation_m
+              : 0.0;
       record.trajectory_duration_s = result_trajectory.getPieceNum() > 0
                                          ? result_trajectory.getTotalDuration()
                                          : std::numeric_limits<double>::quiet_NaN();
@@ -2359,7 +2670,7 @@ namespace ego_planner
     nh.param("optimization/max_jer", max_jer_, -1.0);
 
     nh.param("tf_sfc/enabled", tf_sfc_parameters_.enabled, false);
-    nh.param("tf_sfc/use_projection", tf_sfc_parameters_.use_projection, false);
+    nh.param("tf_sfc/use_projection", tf_sfc_parameters_.use_projection, true);
     nh.param("tf_sfc/use_soft_penalty", tf_sfc_parameters_.use_soft_penalty, false);
     nh.param("tf_sfc/allow_partial_corridors", tf_sfc_parameters_.allow_partial_corridors, true);
     nh.param("tf_sfc/allow_ego_fallback", tf_sfc_parameters_.allow_ego_fallback, true);
@@ -2387,7 +2698,9 @@ namespace ego_planner
     nh.param("tf_sfc/inflation_step", tf_sfc_parameters_.inflation_step, 0.10);
     nh.param("tf_sfc/weight", tf_sfc_parameters_.weight, 1000.0);
     nh.param("tf_sfc/enforcement_weight_multiplier",
-             tf_sfc_parameters_.enforcement_weight_multiplier, 10.0);
+             tf_sfc_parameters_.enforcement_weight_multiplier, 3.0);
+    nh.param("tf_sfc/enforcement_min_improvement",
+             tf_sfc_parameters_.enforcement_min_improvement, 1.0e-5);
     nh.param("tf_sfc/max_final_violation",
              tf_sfc_parameters_.max_final_violation, 1.0e-3);
     nh.param("tf_sfc/penalty_epsilon", tf_sfc_parameters_.penalty_epsilon, 0.02);
@@ -2399,6 +2712,12 @@ namespace ego_planner
              tf_sfc_parameters_.decomp_local_bbox_vertical, 1.0);
     nh.param("tf_sfc/decomp_overlap_extension",
              tf_sfc_parameters_.decomp_overlap_extension, 0.20);
+    nh.param("tf_sfc/decomp_initial_velocity_segment",
+             tf_sfc_parameters_.decomp_initial_velocity_segment, 0.40);
+    nh.param("tf_sfc/decomp_initial_velocity_threshold",
+             tf_sfc_parameters_.decomp_initial_velocity_threshold, 0.20);
+    nh.param("tf_sfc/decomp_degenerate_seed_length",
+             tf_sfc_parameters_.decomp_degenerate_seed_length, 0.10);
 
     int direction_mode = static_cast<int>(tf_sfc::DirectionMode::PCA);
     nh.param("tf_sfc/direction_mode", direction_mode,
@@ -2428,6 +2747,8 @@ namespace ego_planner
     tf_sfc_parameters_.weight = std::max(tf_sfc_parameters_.weight, 0.0);
     tf_sfc_parameters_.enforcement_weight_multiplier =
         std::max(tf_sfc_parameters_.enforcement_weight_multiplier, 1.0);
+    tf_sfc_parameters_.enforcement_min_improvement =
+        std::max(tf_sfc_parameters_.enforcement_min_improvement, 0.0);
     tf_sfc_parameters_.max_final_violation =
         std::max(tf_sfc_parameters_.max_final_violation, 0.0);
     tf_sfc_parameters_.penalty_epsilon = std::max(tf_sfc_parameters_.penalty_epsilon, 0.0);
@@ -2439,6 +2760,12 @@ namespace ego_planner
         std::max(tf_sfc_parameters_.decomp_local_bbox_vertical, 1.0e-3);
     tf_sfc_parameters_.decomp_overlap_extension =
         std::max(tf_sfc_parameters_.decomp_overlap_extension, 0.0);
+    tf_sfc_parameters_.decomp_initial_velocity_segment =
+        std::max(tf_sfc_parameters_.decomp_initial_velocity_segment, 0.0);
+    tf_sfc_parameters_.decomp_initial_velocity_threshold =
+        std::max(tf_sfc_parameters_.decomp_initial_velocity_threshold, 0.0);
+    tf_sfc_parameters_.decomp_degenerate_seed_length =
+        std::max(tf_sfc_parameters_.decomp_degenerate_seed_length, 1.0e-3);
     if (tf_sfc_parameters_.enforce_final_corridor &&
         !tf_sfc_parameters_.use_soft_penalty)
     {
