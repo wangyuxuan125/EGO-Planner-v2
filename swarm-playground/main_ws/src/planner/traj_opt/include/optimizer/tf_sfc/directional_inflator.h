@@ -55,6 +55,9 @@ private:
                                        int &obstacle_face_count,
                                        int &obstacle_point_count,
                                        bool &face_budget_saturated,
+                                       double &min_obstacle_sample_distance_m,
+                                       int &separation_failure_sample_id,
+                                       bool &separation_failure_at_endpoint,
                                        FailureReason &failure_reason) const;
 
   SpaceState collectCandidateObstacles(const Eigen::Vector3d &anchor,
