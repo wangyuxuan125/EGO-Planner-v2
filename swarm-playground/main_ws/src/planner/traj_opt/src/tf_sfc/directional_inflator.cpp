@@ -263,8 +263,6 @@ DirectionalInflator::collectCandidateObstacles(
     aabb_max = aabb_max.cwiseMax(world);
   }
 
-  const double voxel_padding =
-      0.5 * std::sqrt(3.0) * map_resolution;
   aabb_min.array() -= voxel_padding;
   aabb_max.array() += voxel_padding;
   const Eigen::Vector3i begin =
@@ -450,6 +448,11 @@ DirectionalInflator::buildFaceBoundedCandidate(
 
     Eigen::Vector3d normal =
         (obstacle - samples[nearest_sample_id]).normalized();
+    // Exact support of an axis-aligned occupied voxel in the plane-normal
+    // direction.  The previous half-diagonal sphere was safe but added an
+    // unnecessary orientation-independent clearance on top of map inflation.
+    const double voxel_padding =
+        0.5 * map_resolution * normal.cwiseAbs().sum();
     double offset = normal.dot(obstacle) - voxel_padding;
     double sample_support =
         -std::numeric_limits<double>::infinity();
