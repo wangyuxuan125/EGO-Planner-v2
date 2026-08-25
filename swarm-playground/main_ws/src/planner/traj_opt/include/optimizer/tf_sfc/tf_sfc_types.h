@@ -123,6 +123,10 @@ struct Parameters
   // Junction samples use min_overlap_radius instead.
   double interior_sample_margin = 0.0;
   double min_overlap_radius = 0.15;
+  // Radius and grid step for relocating simplified A* bends while preserving
+  // collision-free visibility to both neighboring seed segments.
+  double junction_refine_radius = 0.50;
+  double junction_refine_step = 0.05;
   double max_inflation_distance = 1.0;
   double inflation_step = 0.10;
   double weight = 1000.0;
