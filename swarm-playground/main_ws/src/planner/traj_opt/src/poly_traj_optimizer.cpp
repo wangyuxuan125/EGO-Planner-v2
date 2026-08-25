@@ -317,13 +317,27 @@ bool buildFixedPieceSeedPath(const GridMap::Ptr &grid_map,
       }
     }
 
+    if (build_info.initial_velocity_seed_used)
+    {
+      build_info.strategy = "velocity_aligned_edge_validated_astar";
+    }
+    else if (build_info.velocity_seed_fallback_used)
+    {
+      build_info.strategy = "edge_validated_astar_velocity_prefix_fallback";
+    }
+    else
+    {
+      build_info.strategy = "edge_validated_astar";
+    }
+
     const auto run_astar = [&](const Eigen::Vector3d &query_start,
                                const Eigen::Vector3d &query_finish) {
       build_info.astar_search_attempted = true;
       ++build_info.astar_search_call_count;
       const ros::WallTime search_started = ros::WallTime::now();
       const ASTAR_RET result =
-          a_star->AstarSearch(resolution, query_start, query_finish, true);
+          a_star->AstarSearch(resolution, query_start, query_finish,
+                              true, true);
       build_info.astar_search_ms +=
           (ros::WallTime::now() - search_started).toSec() * 1000.0;
       return result;
@@ -337,7 +351,8 @@ bool buildFixedPieceSeedPath(const GridMap::Ptr &grid_map,
       build_info.initial_velocity_seed_used = false;
       build_info.velocity_seed_fallback_used = true;
       build_info.velocity_seed_fallback_reason = "velocity_astar_failure";
-      build_info.strategy = "astar_velocity_search_fallback";
+      build_info.strategy =
+          "edge_validated_astar_velocity_search_fallback";
       search_start = start;
       search_result = run_astar(search_start, seed_finish);
     }
@@ -354,15 +369,50 @@ bool buildFixedPieceSeedPath(const GridMap::Ptr &grid_map,
       return false;
     }
     build_info.astar_search_success = true;
-    raw_path.front() = search_start;
-    raw_path.back() = seed_finish;
-    if (build_info.initial_velocity_seed_used)
+
+    // Preserve the A* grid endpoints. Replacing the first/last grid point with
+    // an exact state can turn a valid grid edge into a longer diagonal that
+    // crosses an occupied voxel.
+    const Eigen::Vector3d astar_grid_start = raw_path.front();
+    if ((astar_grid_start - search_start).norm() > 1.0e-6)
     {
-      raw_path.insert(raw_path.begin(), start);
+      const SegmentState start_bridge_state =
+          segmentState(grid_map, search_start, astar_grid_start);
+      if (start_bridge_state != SegmentState::FREE)
+      {
+        build_info.seed_validation_failure_point_id = 0;
+        failure_reason = segmentFailureReason(start_bridge_state);
+        return false;
+      }
+      raw_path.insert(raw_path.begin(), search_start);
     }
     else
     {
-      raw_path.front() = start;
+      raw_path.front() = search_start;
+    }
+    if (build_info.initial_velocity_seed_used)
+    {
+      // The velocity prefix was already certified before the A* request.
+      raw_path.insert(raw_path.begin(), start);
+    }
+
+    const Eigen::Vector3d astar_grid_finish = raw_path.back();
+    if ((astar_grid_finish - seed_finish).norm() > 1.0e-6)
+    {
+      const SegmentState finish_bridge_state =
+          segmentState(grid_map, astar_grid_finish, seed_finish);
+      if (finish_bridge_state != SegmentState::FREE)
+      {
+        build_info.seed_validation_failure_point_id =
+            static_cast<int>(raw_path.size()) - 1;
+        failure_reason = segmentFailureReason(finish_bridge_state);
+        return false;
+      }
+      raw_path.push_back(seed_finish);
+    }
+    else
+    {
+      raw_path.back() = seed_finish;
     }
   }
 
@@ -394,6 +444,7 @@ bool buildFixedPieceSeedPath(const GridMap::Ptr &grid_map,
         segmentState(grid_map, raw_path[current], raw_path[next]);
     if (state != SegmentState::FREE)
     {
+      build_info.seed_validation_failure_point_id = current;
       failure_reason = segmentFailureReason(state);
       return false;
     }

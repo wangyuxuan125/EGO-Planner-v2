@@ -105,6 +105,12 @@ roslaunch ego_planner single_drone_interactive.launch \
 
 ### EGO + Liu et al. EllipsoidDecomp SFC
 
+该基线要求 piecewise-linear seed 的连续边无碰撞。原 EGO A* 只保证 26 邻域节点为空闲，可能沿体素边角穿越占据空间；因此 Liu 调用显式开启连续边验证，原 EGO 和其他默认 A* 调用保持关闭。该搜索仍计入 `astar_search_ms` 和总规划时间，`seed_path_strategy` 会记录为 `edge_validated_astar`。不要把修正前的 `liu_hard_junction_v9`（典型失败为 `seed_path_occupied`）与修正后的标签合并统计。
+
+建议先把旧 CSV 移到归档目录，或至少使用下方的新标签，避免追加模式把两种实现混在同一实验组。
+
+
+
 ```bash
 roslaunch ego_planner single_drone_interactive.launch \
   map_seed:=42 \
@@ -129,7 +135,7 @@ roslaunch ego_planner single_drone_interactive.launch \
   tf_sfc_decomp_initial_velocity_threshold:=0.20 \
   tf_sfc_decomp_degenerate_seed_length:=0.10 \
   tf_sfc_decomp_retry_seed_validation_without_velocity:=true \
-  tf_sfc_experiment_tag:=liu_hard_junction_v9
+  tf_sfc_experiment_tag:=liu_edge_validated_hard_junction_v9
 ```
 
 该分支先调用 EGO 已有 A* 生成无碰撞骨架，做视线简化后按 MINCO piece 预算细分，再逐段调用 `EllipsoidDecomp3D::dilate`。TF-SFC 的这次 A* 调用严格限制在当前膨胀局部地图内，不能把地图外未知空间当作自由空间；这一限制不改变原始 EGO 的其他 A* 调用。为提高相邻多面体在折点处的公共内域，每个分解 seed 段会沿自身切向向共享折点外延伸，延伸部分逐点检查局部地图；遇到障碍或边界时自动折半回退。延伸量由 `tf_sfc_decomp_overlap_extension` 控制并限制为当前段长度的 45% 以下。`0` 可关闭该优化，用于消融实验；它不会降低 `tf_sfc_min_overlap_radius` 的认证阈值。

@@ -98,7 +98,8 @@ public:
 	void initGridMap(GridMap::Ptr occ_map, const Eigen::Vector3i pool_size);
 
 	ASTAR_RET AstarSearch(const double step_size, Eigen::Vector3d start_pt, Eigen::Vector3d end_pt,
-								bool restrict_to_inflated_map = false);
+								bool restrict_to_inflated_map = false,
+								bool validate_continuous_edges = false);
 
 	std::vector<Eigen::Vector3d> getPath();
 };
