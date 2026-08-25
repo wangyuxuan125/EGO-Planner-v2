@@ -150,6 +150,93 @@ double pointInflatedClearance(const GridMap::Ptr &grid_map,
   return clearance;
 }
 
+// Relocate only the internal bends of the simplified path. Candidate bends are
+// searched by increasing displacement, must retain the requested clearance,
+// and must keep both adjacent seed segments collision-free.
+bool refineSimplifiedJunctions(
+    const GridMap::Ptr &grid_map,
+    ego_planner::tf_sfc::PointVector &path,
+    const double required_clearance,
+    const double search_radius,
+    const double search_step,
+    bool &refinement_used)
+{
+  refinement_used = false;
+  if (!grid_map || path.size() < 3 || required_clearance <= 0.0)
+  {
+    return true;
+  }
+  if (search_radius <= 0.0 || search_step <= 0.0)
+  {
+    return false;
+  }
+
+  ego_planner::tf_sfc::PointVector offsets;
+  const int cells =
+      std::max(1, static_cast<int>(std::ceil(search_radius / search_step)));
+  for (int dx = -cells; dx <= cells; ++dx)
+  {
+    for (int dy = -cells; dy <= cells; ++dy)
+    {
+      for (int dz = -cells; dz <= cells; ++dz)
+      {
+        const Eigen::Vector3d offset =
+            search_step * Eigen::Vector3d(dx, dy, dz);
+        if (offset.norm() <= search_radius + 1.0e-9)
+        {
+          offsets.push_back(offset);
+        }
+      }
+    }
+  }
+  std::stable_sort(
+      offsets.begin(), offsets.end(),
+      [](const Eigen::Vector3d &lhs, const Eigen::Vector3d &rhs) {
+        return lhs.squaredNorm() < rhs.squaredNorm();
+      });
+
+  for (size_t point_id = 1; point_id + 1 < path.size(); ++point_id)
+  {
+    const Eigen::Vector3d original = path[point_id];
+    bool found = false;
+    Eigen::Vector3d accepted = original;
+    for (const Eigen::Vector3d &offset : offsets)
+    {
+      const Eigen::Vector3d candidate = original + offset;
+      if ((candidate - path[point_id - 1]).norm() <= 0.5 * search_step ||
+          (candidate - path[point_id + 1]).norm() <= 0.5 * search_step)
+      {
+        continue;
+      }
+      if (pointInflatedClearance(grid_map, candidate,
+                                 required_clearance) +
+              1.0e-9 <
+          required_clearance)
+      {
+        continue;
+      }
+      if (segmentState(grid_map, path[point_id - 1], candidate) !=
+              SegmentState::FREE ||
+          segmentState(grid_map, candidate, path[point_id + 1]) !=
+              SegmentState::FREE)
+      {
+        continue;
+      }
+      accepted = candidate;
+      found = true;
+      break;
+    }
+    if (!found)
+    {
+      return false;
+    }
+    refinement_used =
+        refinement_used || (accepted - original).norm() > 1.0e-6;
+    path[point_id] = accepted;
+  }
+  return true;
+}
+
 struct SeedPathBuildInfo
 {
   std::string strategy = "astar";
@@ -197,6 +284,8 @@ bool buildFixedPieceSeedPath(const GridMap::Ptr &grid_map,
                              const bool allow_partial_corridors,
                              const int min_valid_pieces,
                              const double min_junction_clearance,
+                             const double junction_refine_radius,
+                             const double junction_refine_step,
                              const double initial_velocity_segment_length,
                              const double initial_velocity_threshold,
                              const double degenerate_seed_length,
@@ -492,31 +581,13 @@ bool buildFixedPieceSeedPath(const GridMap::Ptr &grid_map,
     simplified.push_back(raw_path[1]);
     current = 1;
   }
-  const double required_junction_clearance =
-      std::max(min_junction_clearance, 0.0);
-  bool overlap_clearance_backoff_used = false;
   while (current + 1 < static_cast<int>(raw_path.size()))
   {
     int next = static_cast<int>(raw_path.size()) - 1;
-    while (next > current + 1)
+    while (next > current + 1 &&
+           segmentState(grid_map, raw_path[current], raw_path[next]) !=
+               SegmentState::FREE)
     {
-      const SegmentState candidate_state =
-          segmentState(grid_map, raw_path[current], raw_path[next]);
-      const bool is_terminal =
-          next + 1 == static_cast<int>(raw_path.size());
-      const bool clearance_ok =
-          is_terminal ||
-          pointInflatedClearance(grid_map, raw_path[next],
-                                 required_junction_clearance) +
-                  1.0e-9 >=
-              required_junction_clearance;
-      if (candidate_state == SegmentState::FREE && clearance_ok)
-      {
-        break;
-      }
-      overlap_clearance_backoff_used =
-          overlap_clearance_backoff_used ||
-          (candidate_state == SegmentState::FREE && !clearance_ok);
       --next;
     }
     const SegmentState state =
@@ -527,25 +598,23 @@ bool buildFixedPieceSeedPath(const GridMap::Ptr &grid_map,
       failure_reason = segmentFailureReason(state);
       return false;
     }
-    const bool is_terminal =
-        next + 1 == static_cast<int>(raw_path.size());
-    if (!is_terminal &&
-        pointInflatedClearance(grid_map, raw_path[next],
-                               required_junction_clearance) +
-                1.0e-9 <
-            required_junction_clearance)
-    {
-      build_info.seed_validation_failure_point_id = next;
-      failure_reason =
-          ego_planner::tf_sfc::FailureReason::OVERLAP_TOO_SMALL;
-      return false;
-    }
     simplified.push_back(raw_path[next]);
     current = next;
   }
-  if (overlap_clearance_backoff_used)
+
+  bool junction_refinement_used = false;
+  if (!refineSimplifiedJunctions(
+          grid_map, simplified, std::max(min_junction_clearance, 0.0),
+          junction_refine_radius, junction_refine_step,
+          junction_refinement_used))
   {
-    build_info.strategy += "_overlap_clearance_refined";
+    failure_reason =
+        ego_planner::tf_sfc::FailureReason::OVERLAP_TOO_SMALL;
+    return false;
+  }
+  if (junction_refinement_used)
+  {
+    build_info.strategy += "_overlap_local_refined";
   }
 
   int segment_count = static_cast<int>(simplified.size()) - 1;
@@ -791,6 +860,8 @@ namespace ego_planner
                                           tf_sfc_parameters_.allow_partial_corridors,
                                           tf_sfc_parameters_.min_valid_pieces,
                                           tf_sfc_parameters_.min_overlap_radius,
+                tf_sfc_parameters_.junction_refine_radius,
+                tf_sfc_parameters_.junction_refine_step,
                                           tf_sfc_parameters_.decomp_initial_velocity_segment,
                                           tf_sfc_parameters_.decomp_initial_velocity_threshold,
                                           tf_sfc_parameters_.decomp_degenerate_seed_length,
@@ -853,6 +924,8 @@ namespace ego_planner
                 tf_sfc_parameters_.allow_partial_corridors,
                 tf_sfc_parameters_.min_valid_pieces,
                 tf_sfc_parameters_.min_overlap_radius,
+                tf_sfc_parameters_.junction_refine_radius,
+                tf_sfc_parameters_.junction_refine_step,
                 0.0,
                 tf_sfc_parameters_.decomp_initial_velocity_threshold,
                 tf_sfc_parameters_.decomp_degenerate_seed_length,
@@ -939,6 +1012,8 @@ namespace ego_planner
                 tf_sfc_parameters_.allow_partial_corridors,
                 tf_sfc_parameters_.min_valid_pieces,
                 tf_sfc_parameters_.min_overlap_radius,
+                tf_sfc_parameters_.junction_refine_radius,
+                tf_sfc_parameters_.junction_refine_step,
                 tf_sfc_parameters_.decomp_initial_velocity_segment,
                 tf_sfc_parameters_.decomp_initial_velocity_threshold,
                 tf_sfc_parameters_.decomp_degenerate_seed_length,
@@ -1008,7 +1083,9 @@ namespace ego_planner
                 finState.col(0), piece_num_,
                 tf_sfc_parameters_.allow_partial_corridors,
                 tf_sfc_parameters_.min_valid_pieces,
-                tf_sfc_parameters_.min_overlap_radius, 0.0,
+                tf_sfc_parameters_.min_overlap_radius,
+                tf_sfc_parameters_.junction_refine_radius,
+                tf_sfc_parameters_.junction_refine_step, 0.0,
                 tf_sfc_parameters_.decomp_initial_velocity_threshold,
                 tf_sfc_parameters_.decomp_degenerate_seed_length,
                 fallback_seed_path, fallback_covered_piece_num,
@@ -3495,6 +3572,10 @@ namespace ego_planner
     nh.param("tf_sfc/interior_sample_margin",
              tf_sfc_parameters_.interior_sample_margin, 0.0);
     nh.param("tf_sfc/min_overlap_radius", tf_sfc_parameters_.min_overlap_radius, 0.15);
+    nh.param("tf_sfc/junction_refine_radius",
+             tf_sfc_parameters_.junction_refine_radius, 0.50);
+    nh.param("tf_sfc/junction_refine_step",
+             tf_sfc_parameters_.junction_refine_step, 0.05);
     nh.param("tf_sfc/max_inflation_distance", tf_sfc_parameters_.max_inflation_distance, 1.0);
     nh.param("tf_sfc/inflation_step", tf_sfc_parameters_.inflation_step, 0.10);
     nh.param("tf_sfc/weight", tf_sfc_parameters_.weight, 1000.0);
@@ -3554,7 +3635,12 @@ namespace ego_planner
     tf_sfc_parameters_.safety_margin = std::max(tf_sfc_parameters_.safety_margin, 0.0);
     tf_sfc_parameters_.interior_sample_margin =
         std::max(tf_sfc_parameters_.interior_sample_margin, 0.0);
-    tf_sfc_parameters_.min_overlap_radius = std::max(tf_sfc_parameters_.min_overlap_radius, 0.0);
+    tf_sfc_parameters_.min_overlap_radius =
+        std::max(tf_sfc_parameters_.min_overlap_radius, 0.0);
+    tf_sfc_parameters_.junction_refine_radius =
+        std::max(tf_sfc_parameters_.junction_refine_radius, 0.0);
+    tf_sfc_parameters_.junction_refine_step =
+        std::max(tf_sfc_parameters_.junction_refine_step, 1.0e-3);
     tf_sfc_parameters_.max_inflation_distance = std::max(tf_sfc_parameters_.max_inflation_distance, 0.0);
     tf_sfc_parameters_.inflation_step = std::max(tf_sfc_parameters_.inflation_step, 1.0e-3);
     tf_sfc_parameters_.weight = std::max(tf_sfc_parameters_.weight, 0.0);
