@@ -56,15 +56,23 @@ bool DirectionalInflator::inflate(const PointVector &samples,
   int accepted_obstacle_faces = 0;
   int accepted_obstacle_points = 0;
   bool accepted_budget_saturated = false;
+  FailureReason initial_failure = FailureReason::NONE;
   const SpaceState initial_state = buildFaceBoundedCandidate(
       samples, anchor, directions.frame, lower, upper, map_resolution,
       is_occupied, accepted_hpoly, accepted_obstacle_faces,
-      accepted_obstacle_points, accepted_budget_saturated);
+      accepted_obstacle_points, accepted_budget_saturated,
+      initial_failure);
   if (initial_state != SpaceState::FREE)
   {
-    failure_reason = initial_state == SpaceState::OUTSIDE_MAP
-                         ? FailureReason::OUTSIDE_LOCAL_MAP
-                         : FailureReason::INITIAL_OBB_OCCUPIED;
+    corridor.metrics.obstacle_face_count = accepted_obstacle_faces;
+    corridor.metrics.obstacle_point_count = accepted_obstacle_points;
+    corridor.metrics.face_budget_saturated = accepted_budget_saturated;
+    failure_reason =
+        initial_failure != FailureReason::NONE
+            ? initial_failure
+            : (initial_state == SpaceState::OUTSIDE_MAP
+                   ? FailureReason::OUTSIDE_LOCAL_MAP
+                   : FailureReason::INITIAL_OBB_OCCUPIED);
     return false;
   }
 
@@ -98,11 +106,12 @@ bool DirectionalInflator::inflate(const PointVector &samples,
         int candidate_obstacle_faces = 0;
         int candidate_obstacle_points = 0;
         bool candidate_budget_saturated = false;
+        FailureReason candidate_failure = FailureReason::NONE;
         const SpaceState candidate_state = buildFaceBoundedCandidate(
             samples, anchor, directions.frame, candidate_lower,
             candidate_upper, map_resolution, is_occupied, candidate_hpoly,
             candidate_obstacle_faces, candidate_obstacle_points,
-            candidate_budget_saturated);
+            candidate_budget_saturated, candidate_failure);
         if (candidate_state != SpaceState::FREE)
         {
           break;
@@ -280,18 +289,21 @@ DirectionalInflator::buildFaceBoundedCandidate(
     HPoly &hpoly,
     int &obstacle_face_count,
     int &obstacle_point_count,
-    bool &face_budget_saturated) const
+    bool &face_budget_saturated,
+    FailureReason &failure_reason) const
 {
   hpoly = boundsToHPoly(anchor, frame, lower, upper);
   obstacle_face_count = 0;
   obstacle_point_count = 0;
   face_budget_saturated = false;
+  failure_reason = FailureReason::NONE;
 
   PointVector obstacles;
   const SpaceState scan_state = collectCandidateObstacles(
       anchor, frame, lower, upper, map_resolution, is_occupied, obstacles);
   if (scan_state == SpaceState::OUTSIDE_MAP)
   {
+    failure_reason = FailureReason::OUTSIDE_LOCAL_MAP;
     return SpaceState::OUTSIDE_MAP;
   }
   obstacle_point_count = static_cast<int>(obstacles.size());
@@ -302,6 +314,7 @@ DirectionalInflator::buildFaceBoundedCandidate(
 
   if (parameters_.corridor_method != "tf_sfc")
   {
+    failure_reason = FailureReason::INITIAL_OBB_OCCUPIED;
     return SpaceState::OCCUPIED;
   }
 
@@ -310,6 +323,8 @@ DirectionalInflator::buildFaceBoundedCandidate(
                            parameters_.max_faces - 6));
   if (face_capacity == 0)
   {
+    face_budget_saturated = true;
+    failure_reason = FailureReason::FACE_BUDGET_EXHAUSTED;
     return SpaceState::OCCUPIED;
   }
 
@@ -375,6 +390,7 @@ DirectionalInflator::buildFaceBoundedCandidate(
     }
     if (nearest_sample_id < 0 || nearest_distance <= 1.0e-12)
     {
+      failure_reason = FailureReason::OBSTACLE_SEPARATION_FAILURE;
       return SpaceState::OCCUPIED;
     }
 
@@ -390,6 +406,7 @@ DirectionalInflator::buildFaceBoundedCandidate(
     if (sample_support + required_sample_slack >
         offset + kTolerance)
     {
+      failure_reason = FailureReason::OBSTACLE_SEPARATION_FAILURE;
       return SpaceState::OCCUPIED;
     }
 
@@ -417,6 +434,7 @@ DirectionalInflator::buildFaceBoundedCandidate(
       if (merged_support + required_sample_slack >
           merged_offset + kTolerance)
       {
+        failure_reason = FailureReason::OBSTACLE_SEPARATION_FAILURE;
         return SpaceState::OCCUPIED;
       }
       cut_offsets[merge_id] = merged_offset;
@@ -426,6 +444,7 @@ DirectionalInflator::buildFaceBoundedCandidate(
       if (static_cast<int>(cut_normals.size()) >= face_capacity)
       {
         face_budget_saturated = true;
+        failure_reason = FailureReason::FACE_BUDGET_EXHAUSTED;
         return SpaceState::OCCUPIED;
       }
       cut_normals.push_back(normal);
@@ -445,6 +464,7 @@ DirectionalInflator::buildFaceBoundedCandidate(
   {
     if (!contains(hpoly, sample, kTolerance))
     {
+      failure_reason = FailureReason::OBSTACLE_SEPARATION_FAILURE;
       return SpaceState::OCCUPIED;
     }
   }
@@ -454,6 +474,9 @@ DirectionalInflator::buildFaceBoundedCandidate(
     {
       face_budget_saturated =
           static_cast<int>(cut_normals.size()) >= face_capacity;
+      failure_reason = face_budget_saturated
+                           ? FailureReason::FACE_BUDGET_EXHAUSTED
+                           : FailureReason::OBSTACLE_SEPARATION_FAILURE;
       return SpaceState::OCCUPIED;
     }
   }
