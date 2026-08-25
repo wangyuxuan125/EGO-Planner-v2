@@ -35,6 +35,10 @@
     <arg name="drone_id"/>
     <arg name="tf_sfc_enabled" default="false"/>
     <arg name="tf_sfc_corridor_method" default="obb"/>
+    <arg name="tf_sfc_max_faces" default="12"/>
+    <arg name="tf_sfc_max_obs_faces" default="6"/>
+    <arg name="tf_sfc_max_inflation_distance" default="1.0"/>
+    <arg name="tf_sfc_inflation_step" default="0.10"/>
     <arg name="tf_sfc_use_projection" default="true"/>
     <arg name="tf_sfc_use_soft_penalty" default="true"/>
     <arg name="tf_sfc_allow_partial_corridors" default="true"/>
@@ -188,13 +192,14 @@
         <param name="tf_sfc/log_enabled" value="$(arg tf_sfc_log_enabled)" type="bool"/>
         <param name="tf_sfc/log_directory" value="$(arg tf_sfc_log_directory)" type="string"/>
         <param name="tf_sfc/experiment_tag" value="$(arg tf_sfc_experiment_tag)" type="string"/>
-        <param name="tf_sfc/max_faces" value="12" type="int"/>
+        <param name="tf_sfc/max_faces" value="$(arg tf_sfc_max_faces)" type="int"/>
+        <param name="tf_sfc/max_obs_faces" value="$(arg tf_sfc_max_obs_faces)" type="int"/>
         <param name="tf_sfc/samples_per_piece" value="8" type="int"/>
         <param name="tf_sfc/projection_passes" value="4" type="int"/>
         <param name="tf_sfc/safety_margin" value="$(arg tf_sfc_safety_margin)" type="double"/>
         <param name="tf_sfc/min_overlap_radius" value="$(arg tf_sfc_min_overlap_radius)" type="double"/>
-        <param name="tf_sfc/max_inflation_distance" value="1.0" type="double"/>
-        <param name="tf_sfc/inflation_step" value="0.10" type="double"/>
+        <param name="tf_sfc/max_inflation_distance" value="$(arg tf_sfc_max_inflation_distance)" type="double"/>
+        <param name="tf_sfc/inflation_step" value="$(arg tf_sfc_inflation_step)" type="double"/>
         <param name="tf_sfc/weight" value="1000.0" type="double"/>
         <param name="tf_sfc/penalty_epsilon" value="0.02" type="double"/>
         <param name="tf_sfc/decomp_local_bbox_forward" value="$(arg tf_sfc_decomp_local_bbox_forward)" type="double"/>
