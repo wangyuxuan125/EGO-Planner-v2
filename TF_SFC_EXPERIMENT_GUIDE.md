@@ -179,6 +179,12 @@ roslaunch ego_planner single_drone_interactive.launch \
 
 若仍失败，不要先调整 A*。查看 `ego_corridors_v12_drone_0.csv` 的 `min_obstacle_sample_distance_m`、`separation_failure_sample_id` 和 `separation_failure_at_endpoint`：端点失败指向重叠构造，内部失败指向 seed/包络净空，`face_budget_saturated=1` 则指向平面选择或裁剪。
 
+### v12.1：接头净空感知的 seed 分段
+
+v12 CSV 若同时满足 `separation_failure_at_endpoint=1`、`separation_failure_sample_id=8` 且 `face_budget_saturated=0`，说明失败点是第一个 MINCO 内部接头，而不是段内样本或面预算。当前修正保持 raw A* 不变，在视线简化过程中把净空不足的最远可见折点回退到原始 A* 路径上能够容纳 `min_overlap_radius` 的点。使用该修正时，`seed_path_strategy` 会带有 `_overlap_clearance_refined` 后缀。
+
+重新测试时使用新的目录或标签 `proposed_pca_f12_v12_overlap_refined`，不要把修正前后的追加行放在同一实验组。若结果变为 `overlap_too_small`，表示该 raw A* 局部路径上确实没有满足当前固定半径的可达接头；此时应进入 overlap refiner/clearance-aware path ablation，而不是把失败计为面受限生成器或优化器失败。
+
 ### 自定义日志目录
 
 ```bash
