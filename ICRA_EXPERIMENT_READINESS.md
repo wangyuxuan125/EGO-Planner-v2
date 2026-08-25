@@ -1,5 +1,7 @@
 # ICRA experiment readiness
 
+The paper claim, development milestones, fairness rules and freeze gates are defined in [ICRA_PAPER_MAINLINE_AND_ALGORITHM_ROADMAP.md](ICRA_PAPER_MAINLINE_AND_ALGORITHM_ROADMAP.md).
+
 ## Current evidence-ready scope
 
 - Original EGO, PCA/Frenet OBB-SFC, and Liu/DecompUtil EllipsoidDecomp can be selected explicitly.
@@ -14,7 +16,7 @@
 
 1. Run clean Release builds with the exact ROS Noetic, Eigen, DecompUtil and DecompROS revisions recorded in a lock/setup document.
 2. Execute regression tests for at least 30 fixed seeds before large experiments. Confirm that every active hard junction has near-zero `max_junction_violation_final_m`, compare v8 success/latency against the v7 hard-junction result and v6 soft-only ablation, and verify no increase in final obstacle or swarm-clearance failures.
-3. Freeze schema v9 and `tools/analyze_tf_sfc_v9.py` after clean runtime validation. The tool separates candidate calls, planning events, goals, search, corridor generation and conditional optimization. Add an FSM-level goal-arrival/timeout/collision record before calling any aggregate a mission-success rate: schema v9 identifies a goal and retry chain but does not yet prove execution reached it.
+3. Freeze the final CSV schema (v12 is the current diagnostic schema) and its compatible aggregation script after clean runtime validation. The tool separates candidate calls, planning events, goals, search, corridor generation and conditional optimization. Add an FSM-level goal-arrival/timeout/collision record before calling any aggregate a mission-success rate: schema v9 identifies a goal and retry chain but does not yet prove execution reached it.
 4. Add continuous or sufficiently conservative trajectory-versus-corridor verification. The current `max_corridor_violation_*` values are quadrature-sampled diagnostics, not a mathematical continuous-time certificate.
 5. Define identical maps, start/goal pairs, dynamics, obstacle inflation, time limits, warm-up policy and failure denominators for all EGO and GCOPTER baselines.
 6. Run the full method matrix and ablations: original EGO, OBB without/with overlap handling, EllipsoidDecomp with extension 0/0.20 m, and GCOPTER FIRI/EllipsoidDecomp/TF-SFC.
@@ -24,7 +26,7 @@
 
 - Construct and validate the actual per-piece MINCO sensitivity Gramian instead of reporting the current PCA fallback as sensitivity mode.
 - Implement the claimed obstacle cutting-plane selection, face pruning/budgeting and general overlap optimization, with ablations for each component.
-- Add corridor MVIE volume (or a justified Chebyshev-radius approximation). Schema v9 now provides line-seed containment and local-map coverage, but these must not be presented as region-volume quality.
+- Add corridor MVIE volume (or a justified Chebyshev-radius approximation). The current schema provides line-seed containment and local-map coverage, but these must not be presented as region-volume quality.
 - Validate multi-drone interactions if swarm performance is part of the paper claim; current evidence is mainly single-drone corridor integration.
 - Add simulation stress tests and, if claimed, real-platform experiments with estimator/control failures separated from planner failures.
 
