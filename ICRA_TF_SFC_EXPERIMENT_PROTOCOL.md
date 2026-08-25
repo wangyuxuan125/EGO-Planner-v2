@@ -16,9 +16,11 @@ success as a mission success.
 
 The proposed method uses at most `max_faces` planes. Six planes bound the
 trajectory-aligned box and at most `max_obs_faces` additional planes exclude
-nearby occupied voxels. Every accepted obstacle plane must retain a ball of
-radius `min_overlap_radius` around every seed sample. This makes overlap a
-construction invariant rather than only a post-hoc check.
+nearby occupied voxels. Obstacle planes retain a ball of radius `min_overlap_radius` at piece
+endpoints, where adjacent-corridor overlap is required. Interior samples use
+the independent `interior_sample_margin` (default `0 m`). This prevents a
+junction-overlap requirement from silently becoming a conservative tube-radius
+requirement along the entire piece.
 
 Direction mode 2 may be reported as the sensitivity variant only when
 `direction_fallback_count == 0`. Until an actual per-piece MINCO sensitivity
@@ -59,6 +61,7 @@ roslaunch ego_planner single_drone_interactive.launch \
   tf_sfc_direction_mode:=1 \
   tf_sfc_max_faces:=12 \
   tf_sfc_max_obs_faces:=6 \
+  tf_sfc_interior_sample_margin:=0.0 \
   tf_sfc_allow_partial_corridors:=true \
   tf_sfc_allow_ego_fallback:=false \
   tf_sfc_hard_corridor_parameterization:=true \
@@ -105,10 +108,12 @@ method per seed.
 
 ## Recorded metrics and validity gates
 
-Schema v11 writes `ego_runs_v11_drone_0.csv` and
-`ego_corridors_v11_drone_0.csv`. The corridor file adds
-`obstacle_face_count`, `obstacle_point_count`,
-`face_budget_saturated`, and `anchor_clearance_radius`.
+Schema v12 writes `ego_runs_v12_drone_0.csv` and
+`ego_corridors_v12_drone_0.csv`. In addition to face-budget fields, the
+corridor file records `min_obstacle_sample_distance_m`,
+`separation_failure_sample_id`, and `separation_failure_at_endpoint` so a
+failed cut can be classified as an endpoint-overlap, interior-clearance, or
+face-selection problem.
 
 A paper-valid online-local-planner sample must satisfy all of:
 
@@ -156,3 +161,10 @@ inflated occupancy. This is expected for the original rebound optimizer but is
 invalid as an SFC seed. From v11, OBB and proposed TF-SFC reuse the existing
 collision-free A* seed builder already used by the Liu baseline. The optimizer
 itself is unchanged, and search timing/coverage remain separately logged.
+
+
+## v12 separation-margin correction
+
+The v11 A* seed was edge-valid, but the first proposed corridor repeatedly failed with `obstacle_separation_failure`. The cause was not search: the obstacle cutting plane required `min_overlap_radius` around every seed sample. That parameter is a junction-overlap radius and must not be interpreted as a whole-piece tube radius. v12 applies it only to the two piece endpoints and introduces `interior_sample_margin` for interior samples. The default interior margin is zero because the occupancy map already contains the configured obstacle inflation and the cutting plane also excludes the occupied voxel extent. This is a geometric-semantics correction; it does not change the A* algorithm or optimizer objective.
+
+For the first v12 validation, keep `interior_sample_margin:=0.0`, use certified-prefix mode, and keep EGO fallback disabled. If generation still fails, classify the failure using the new per-piece fields before changing search or safety parameters.
