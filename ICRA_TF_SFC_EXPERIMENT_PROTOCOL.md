@@ -186,3 +186,12 @@ The first v12.1 run failed before corridor construction: all 940 attempts had `s
 v12.2 restores ordinary collision-free line-of-sight simplification, constructs the retained fixed-piece seed, and then locally relocates only its internal junctions. Candidates are searched by increasing displacement within `junction_refine_radius` at `junction_refine_step`; an accepted candidate must satisfy point-to-inflated-voxel-AABB clearance and keep both neighboring seed segments continuously collision-free. Raw A* search remains unchanged. Successful relocation appends `_overlap_local_refined` to `seed_path_strategy`; an exhausted search appends `_overlap_local_refine_failed` and returns `overlap_too_small`.
 
 The default local search radius/step are `0.50 m / 0.05 m`. These parameters must be fixed across corridor methods and included in the experiment manifest. The policy is applied to the final retained seed prefix, including subdivision junctions but excluding the start and terminal prefix endpoint.
+
+
+## v12.3 safe-polyline envelope correction
+
+The v12.2 run moved all retained junctions successfully: 180/180 attempts used `edge_validated_astar_overlap_local_refined`, produced four seed points, and passed continuous edge validation. Piece 0 generated a valid corridor in every attempt with minimum sample slack about `0.091 m`. Piece 1 then failed in every attempt; most failures were at interior samples and the nearest obstacle-center distance fell to approximately `0.019 m`. This isolates polynomial overshoot: the collision-free piecewise-linear seed was valid, but the unoptimized MINCO polynomial through the same junctions curved toward inflated occupancy.
+
+OBB and proposed TF-SFC now inflate around uniformly sampled straight seed segments, not around the unoptimized MINCO curve. The corresponding initial MINCO piece is retained only as a direction hint for Frenet/PCA/sensitivity orientation. Because the generated H-polytope is convex and contains the line endpoints, it contains the entire straight seed segment. The optimized polynomial is still governed by hard junction parameterization, in-piece sampled penalties, collision checks and final corridor rejection.
+
+This correction implements the intended SeedProvider/EnvelopeProvider separation. It does not make the raw A* path or unoptimized polynomial part of the proposed contribution, and it is applied to both OBB and proposed TF-SFC. Liu already consumes the same validated piecewise-linear seed through EllipsoidDecomp.
