@@ -57,6 +57,8 @@
     <arg name="tf_sfc_safety_margin" default="0.10"/>
     <arg name="tf_sfc_min_overlap_radius" default="0.08"/>
     <arg name="tf_sfc_interior_sample_margin" default="0.0"/>
+    <arg name="tf_sfc_junction_refine_radius" default="0.50"/>
+    <arg name="tf_sfc_junction_refine_step" default="0.05"/>
     <arg name="tf_sfc_direction_mode" default="1"/>
     <arg name="tf_sfc_log_enabled" default="true"/>
     <arg name="tf_sfc_log_directory" default="$(env HOME)/tf_sfc_results/ego"/>
@@ -200,6 +202,8 @@
         <param name="tf_sfc/safety_margin" value="$(arg tf_sfc_safety_margin)" type="double"/>
         <param name="tf_sfc/min_overlap_radius" value="$(arg tf_sfc_min_overlap_radius)" type="double"/>
         <param name="tf_sfc/interior_sample_margin" value="$(arg tf_sfc_interior_sample_margin)" type="double"/>
+        <param name="tf_sfc/junction_refine_radius" value="$(arg tf_sfc_junction_refine_radius)" type="double"/>
+        <param name="tf_sfc/junction_refine_step" value="$(arg tf_sfc_junction_refine_step)" type="double"/>
         <param name="tf_sfc/max_inflation_distance" value="$(arg tf_sfc_max_inflation_distance)" type="double"/>
         <param name="tf_sfc/inflation_step" value="$(arg tf_sfc_inflation_step)" type="double"/>
         <param name="tf_sfc/weight" value="1000.0" type="double"/>
