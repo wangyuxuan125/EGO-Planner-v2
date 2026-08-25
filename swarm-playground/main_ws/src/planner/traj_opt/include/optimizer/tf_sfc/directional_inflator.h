@@ -54,7 +54,8 @@ private:
                                        HPoly &hpoly,
                                        int &obstacle_face_count,
                                        int &obstacle_point_count,
-                                       bool &face_budget_saturated) const;
+                                       bool &face_budget_saturated,
+                                       FailureReason &failure_reason) const;
 
   SpaceState collectCandidateObstacles(const Eigen::Vector3d &anchor,
                                        const Eigen::Matrix3d &frame,
