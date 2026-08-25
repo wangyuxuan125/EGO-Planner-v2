@@ -56,17 +56,29 @@ bool DirectionalInflator::inflate(const PointVector &samples,
   int accepted_obstacle_faces = 0;
   int accepted_obstacle_points = 0;
   bool accepted_budget_saturated = false;
+  double accepted_min_obstacle_sample_distance_m =
+      std::numeric_limits<double>::quiet_NaN();
+  int accepted_separation_failure_sample_id = -1;
+  bool accepted_separation_failure_at_endpoint = false;
   FailureReason initial_failure = FailureReason::NONE;
   const SpaceState initial_state = buildFaceBoundedCandidate(
       samples, anchor, directions.frame, lower, upper, map_resolution,
       is_occupied, accepted_hpoly, accepted_obstacle_faces,
       accepted_obstacle_points, accepted_budget_saturated,
-      initial_failure);
+      accepted_min_obstacle_sample_distance_m,
+      accepted_separation_failure_sample_id,
+      accepted_separation_failure_at_endpoint, initial_failure);
   if (initial_state != SpaceState::FREE)
   {
     corridor.metrics.obstacle_face_count = accepted_obstacle_faces;
     corridor.metrics.obstacle_point_count = accepted_obstacle_points;
     corridor.metrics.face_budget_saturated = accepted_budget_saturated;
+    corridor.metrics.min_obstacle_sample_distance_m =
+        accepted_min_obstacle_sample_distance_m;
+    corridor.metrics.separation_failure_sample_id =
+        accepted_separation_failure_sample_id;
+    corridor.metrics.separation_failure_at_endpoint =
+        accepted_separation_failure_at_endpoint;
     failure_reason =
         initial_failure != FailureReason::NONE
             ? initial_failure
@@ -106,12 +118,20 @@ bool DirectionalInflator::inflate(const PointVector &samples,
         int candidate_obstacle_faces = 0;
         int candidate_obstacle_points = 0;
         bool candidate_budget_saturated = false;
+        double candidate_min_obstacle_sample_distance_m =
+            std::numeric_limits<double>::quiet_NaN();
+        int candidate_separation_failure_sample_id = -1;
+        bool candidate_separation_failure_at_endpoint = false;
         FailureReason candidate_failure = FailureReason::NONE;
         const SpaceState candidate_state = buildFaceBoundedCandidate(
             samples, anchor, directions.frame, candidate_lower,
             candidate_upper, map_resolution, is_occupied, candidate_hpoly,
             candidate_obstacle_faces, candidate_obstacle_points,
-            candidate_budget_saturated, candidate_failure);
+            candidate_budget_saturated,
+            candidate_min_obstacle_sample_distance_m,
+            candidate_separation_failure_sample_id,
+            candidate_separation_failure_at_endpoint,
+            candidate_failure);
         if (candidate_state != SpaceState::FREE)
         {
           break;
@@ -123,6 +143,12 @@ bool DirectionalInflator::inflate(const PointVector &samples,
         accepted_obstacle_faces = candidate_obstacle_faces;
         accepted_obstacle_points = candidate_obstacle_points;
         accepted_budget_saturated = candidate_budget_saturated;
+        accepted_min_obstacle_sample_distance_m =
+            candidate_min_obstacle_sample_distance_m;
+        accepted_separation_failure_sample_id =
+            candidate_separation_failure_sample_id;
+        accepted_separation_failure_at_endpoint =
+            candidate_separation_failure_at_endpoint;
         expanded += step;
       }
     }
@@ -136,6 +162,12 @@ bool DirectionalInflator::inflate(const PointVector &samples,
   corridor.metrics.obstacle_face_count = accepted_obstacle_faces;
   corridor.metrics.obstacle_point_count = accepted_obstacle_points;
   corridor.metrics.face_budget_saturated = accepted_budget_saturated;
+  corridor.metrics.min_obstacle_sample_distance_m =
+      accepted_min_obstacle_sample_distance_m;
+  corridor.metrics.separation_failure_sample_id =
+      accepted_separation_failure_sample_id;
+  corridor.metrics.separation_failure_at_endpoint =
+      accepted_separation_failure_at_endpoint;
   corridor.metrics.direction_fallback = directions.used_fallback;
   corridor.metrics.valid = true;
 
@@ -290,12 +322,19 @@ DirectionalInflator::buildFaceBoundedCandidate(
     int &obstacle_face_count,
     int &obstacle_point_count,
     bool &face_budget_saturated,
+    double &min_obstacle_sample_distance_m,
+    int &separation_failure_sample_id,
+    bool &separation_failure_at_endpoint,
     FailureReason &failure_reason) const
 {
   hpoly = boundsToHPoly(anchor, frame, lower, upper);
   obstacle_face_count = 0;
   obstacle_point_count = 0;
   face_budget_saturated = false;
+  min_obstacle_sample_distance_m =
+      std::numeric_limits<double>::quiet_NaN();
+  separation_failure_sample_id = -1;
+  separation_failure_at_endpoint = false;
   failure_reason = FailureReason::NONE;
 
   PointVector obstacles;
@@ -352,9 +391,12 @@ DirectionalInflator::buildFaceBoundedCandidate(
   std::vector<double> cut_offsets;
   const double voxel_padding =
       0.5 * std::sqrt(3.0) * map_resolution;
-  const double required_sample_slack =
-      std::max(parameters_.min_overlap_radius,
-               0.5 * parameters_.safety_margin);
+  const auto sampleMargin = [this, &samples](const size_t sample_id) {
+    const bool endpoint =
+        sample_id == 0 || sample_id + 1 == samples.size();
+    return endpoint ? parameters_.min_overlap_radius
+                    : parameters_.interior_sample_margin;
+  };
   constexpr double kNormalMergeCosine = 0.985;
   constexpr double kTolerance = 1.0e-9;
 
@@ -388,8 +430,20 @@ DirectionalInflator::buildFaceBoundedCandidate(
         nearest_sample_id = static_cast<int>(sample_id);
       }
     }
+    if (nearest_sample_id >= 0)
+    {
+      const double distance_m = std::sqrt(nearest_distance);
+      min_obstacle_sample_distance_m =
+          std::isfinite(min_obstacle_sample_distance_m)
+              ? std::min(min_obstacle_sample_distance_m, distance_m)
+              : distance_m;
+    }
     if (nearest_sample_id < 0 || nearest_distance <= 1.0e-12)
     {
+      separation_failure_sample_id = nearest_sample_id;
+      separation_failure_at_endpoint =
+          nearest_sample_id == 0 ||
+          nearest_sample_id + 1 == static_cast<int>(samples.size());
       failure_reason = FailureReason::OBSTACLE_SEPARATION_FAILURE;
       return SpaceState::OCCUPIED;
     }
@@ -399,13 +453,23 @@ DirectionalInflator::buildFaceBoundedCandidate(
     double offset = normal.dot(obstacle) - voxel_padding;
     double sample_support =
         -std::numeric_limits<double>::infinity();
-    for (const Eigen::Vector3d &sample : samples)
+    int support_sample_id = -1;
+    for (size_t sample_id = 0; sample_id < samples.size(); ++sample_id)
     {
-      sample_support = std::max(sample_support, normal.dot(sample));
+      const double support =
+          normal.dot(samples[sample_id]) + sampleMargin(sample_id);
+      if (support > sample_support)
+      {
+        sample_support = support;
+        support_sample_id = static_cast<int>(sample_id);
+      }
     }
-    if (sample_support + required_sample_slack >
-        offset + kTolerance)
+    if (sample_support > offset + kTolerance)
     {
+      separation_failure_sample_id = support_sample_id;
+      separation_failure_at_endpoint =
+          support_sample_id == 0 ||
+          support_sample_id + 1 == static_cast<int>(samples.size());
       failure_reason = FailureReason::OBSTACLE_SEPARATION_FAILURE;
       return SpaceState::OCCUPIED;
     }
@@ -425,15 +489,25 @@ DirectionalInflator::buildFaceBoundedCandidate(
           std::min(cut_offsets[merge_id], offset);
       double merged_support =
           -std::numeric_limits<double>::infinity();
-      for (const Eigen::Vector3d &sample : samples)
+      int merged_support_sample_id = -1;
+      for (size_t sample_id = 0; sample_id < samples.size(); ++sample_id)
       {
-        merged_support =
-            std::max(merged_support,
-                     cut_normals[merge_id].dot(sample));
+        const double support =
+            cut_normals[merge_id].dot(samples[sample_id]) +
+            sampleMargin(sample_id);
+        if (support > merged_support)
+        {
+          merged_support = support;
+          merged_support_sample_id = static_cast<int>(sample_id);
+        }
       }
-      if (merged_support + required_sample_slack >
-          merged_offset + kTolerance)
+      if (merged_support > merged_offset + kTolerance)
       {
+        separation_failure_sample_id = merged_support_sample_id;
+        separation_failure_at_endpoint =
+            merged_support_sample_id == 0 ||
+            merged_support_sample_id + 1 ==
+                static_cast<int>(samples.size());
         failure_reason = FailureReason::OBSTACLE_SEPARATION_FAILURE;
         return SpaceState::OCCUPIED;
       }
