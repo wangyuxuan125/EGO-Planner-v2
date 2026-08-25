@@ -685,6 +685,7 @@ bool buildFixedPieceSeedPath(const GridMap::Ptr &grid_map,
           junction_refine_radius, junction_refine_step,
           junction_refinement_used))
   {
+    build_info.strategy += "_overlap_local_refine_failed";
     failure_reason =
         ego_planner::tf_sfc::FailureReason::OVERLAP_TOO_SMALL;
     return false;
