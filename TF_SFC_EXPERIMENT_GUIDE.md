@@ -154,6 +154,31 @@ EllipsoidDecomp 的 seed 有两项稳定性处理：有足够初速度时，首�
 
 v9 将 seed 线段检查改为三维体素 DDA 射线遍历，覆盖对角线穿过的每个栅格，避免均匀采样漏掉薄障碍体素。如果速度对齐 A* 已返回路径、但最终细分 seed 在 DecompUtil 前复检为 `seed_path_occupied`，默认以当前状态重建一次普通 A* seed；该行为由 `tf_sfc_decomp_retry_seed_validation_without_velocity` 控制。正式配置保持 `true`；设置为 `false` 可复现无二次重建的消融。日志会记录尝试、回退原因和原失败点，二次重建仍失败时不会回退 EGO。
 
+### v12：TF-SFC 段内裕量与接头重叠分离
+
+v11 的 `edge_validated_astar` 已成功生成连续边无碰撞的 A* seed，但 proposed TF-SFC 在第 0 段以 `obstacle_separation_failure` 失败。原因是 `min_overlap_radius` 被错误用于每一个段内采样点，相当于额外要求整段轨迹带有固定半径的自由管道。v12 只在每段首尾端点使用该重叠半径，并增加独立参数 `tf_sfc_interior_sample_margin`；首轮验证使用 `0.0`。
+
+```bash
+roslaunch ego_planner single_drone_interactive.launch \
+  map_seed:=42 \
+  tf_sfc_enabled:=true \
+  tf_sfc_corridor_method:=tf_sfc \
+  tf_sfc_direction_mode:=1 \
+  tf_sfc_max_faces:=12 \
+  tf_sfc_max_obs_faces:=6 \
+  tf_sfc_safety_margin:=0.10 \
+  tf_sfc_min_overlap_radius:=0.08 \
+  tf_sfc_interior_sample_margin:=0.0 \
+  tf_sfc_allow_partial_corridors:=true \
+  tf_sfc_min_valid_pieces:=2 \
+  tf_sfc_allow_ego_fallback:=false \
+  tf_sfc_hard_corridor_parameterization:=true \
+  tf_sfc_use_soft_penalty:=true \
+  tf_sfc_experiment_tag:=proposed_pca_f12_v12
+```
+
+若仍失败，不要先调整 A*。查看 `ego_corridors_v12_drone_0.csv` 的 `min_obstacle_sample_distance_m`、`separation_failure_sample_id` 和 `separation_failure_at_endpoint`：端点失败指向重叠构造，内部失败指向 seed/包络净空，`face_budget_saturated=1` 则指向平面选择或裁剪。
+
 ### 自定义日志目录
 
 ```bash
@@ -188,13 +213,13 @@ rostopic echo -n 1 /drone_0_ego_planner_node/tf_sfc/polyhedron_array
 默认输出：
 
 ```text
-$HOME/tf_sfc_results/ego/ego_runs_v9_drone_0.csv
-$HOME/tf_sfc_results/ego/ego_corridors_v9_drone_0.csv
+$HOME/tf_sfc_results/ego/ego_runs_v12_drone_0.csv
+$HOME/tf_sfc_results/ego/ego_corridors_v12_drone_0.csv
 ```
 
-- `ego_runs_v9_drone_<id>.csv`：每次优化候选调用一行。`planning_event_id` 标识一次重规划事件，`retry_index` 表示同一目标下连续失败后的重试序号，`attempt_id` 只表示多拓扑候选，三者不能混用。
+- `ego_runs_v12_drone_<id>.csv`：每次优化候选调用一行。`planning_event_id` 标识一次重规划事件，`retry_index` 表示同一目标下连续失败后的重试序号，`attempt_id` 只表示多拓扑候选，三者不能混用。
 - 搜索阶段单独记录 `astar_search_attempted/success/call_count/ms`、原始 A* 路径点数/长度、最终 seed 点数/长度、连续边有效性和局部地图覆盖率。`seed_path_build_ms` 包含搜索、视线简化和 piece 对齐；`corridor_inflation_ms` 单独记录区域生成调用；两者仍包含在 `corridor_generation_ms` 和 `total_planning_ms` 内。
-- `ego_corridors_v9_drone_<id>.csv`：每个轨迹分段一行。EllipsoidDecomp 额外记录种子包含是否被评估、是否完整包含线段以及最大归一化半空间违反量。由于多面体是凸集，只要两个端点位于多面体内，整条线 seed 就位于多面体内。
+- `ego_corridors_v12_drone_<id>.csv`：每个轨迹分段一行。EllipsoidDecomp 额外记录种子包含是否被评估、是否完整包含线段以及最大归一化半空间违反量。由于多面体是凸集，只要两个端点位于多面体内，整条线 seed 就位于多面体内。
 - 最终安全失败继续拆分为 `obstacle_collision_failure`、`swarm_clearance_failure` 和走廊违反；硬连接点与采样曲线违反量保持独立。
 
 文件使用追加模式。不要在同一标签下混入不同地图或参数；每个场景应使用独立目录或唯一 `tf_sfc_experiment_tag`。
@@ -202,8 +227,8 @@ $HOME/tf_sfc_results/ego/ego_corridors_v9_drone_0.csv
 快速查看：
 
 ```bash
-head -n 5 $HOME/tf_sfc_results/ego/ego_runs_v9_drone_0.csv
-head -n 5 $HOME/tf_sfc_results/ego/ego_corridors_v9_drone_0.csv
+head -n 5 $HOME/tf_sfc_results/ego/ego_runs_v12_drone_0.csv
+head -n 5 $HOME/tf_sfc_results/ego/ego_corridors_v12_drone_0.csv
 ```
 
 ## 4. 当前可用于论文统计的字段
@@ -223,7 +248,7 @@ head -n 5 $HOME/tf_sfc_results/ego/ego_corridors_v9_drone_0.csv
 
 ```bash
 python3 tools/analyze_tf_sfc_v9.py \
-  $HOME/tf_sfc_results/ego/ego_runs_v9_drone_0.csv
+  $HOME/tf_sfc_results/ego/ego_runs_v12_drone_0.csv
 ```
 
 输出中的 `optimizer-call success` 仅为诊断项；论文主表应优先使用独立场景/目标上的系统结果、固定 seed 输入的走廊结果，以及有效走廊条件下的后端结果。工具给出的 “goals with >=1 successful plan” 也不是目标到达率。
