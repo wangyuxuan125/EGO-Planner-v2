@@ -602,21 +602,6 @@ bool buildFixedPieceSeedPath(const GridMap::Ptr &grid_map,
     current = next;
   }
 
-  bool junction_refinement_used = false;
-  if (!refineSimplifiedJunctions(
-          grid_map, simplified, std::max(min_junction_clearance, 0.0),
-          junction_refine_radius, junction_refine_step,
-          junction_refinement_used))
-  {
-    failure_reason =
-        ego_planner::tf_sfc::FailureReason::OVERLAP_TOO_SMALL;
-    return false;
-  }
-  if (junction_refinement_used)
-  {
-    build_info.strategy += "_overlap_local_refined";
-  }
-
   int segment_count = static_cast<int>(simplified.size()) - 1;
   const bool complete_corridor_budget = full_coverage;
   int max_covered_piece_num = complete_corridor_budget ? piece_num : piece_num - 1;
@@ -694,6 +679,21 @@ bool buildFixedPieceSeedPath(const GridMap::Ptr &grid_map,
               static_cast<double>(divisions[segment_id]));
     }
   }
+  bool junction_refinement_used = false;
+  if (!refineSimplifiedJunctions(
+          grid_map, seed_path, std::max(min_junction_clearance, 0.0),
+          junction_refine_radius, junction_refine_step,
+          junction_refinement_used))
+  {
+    failure_reason =
+        ego_planner::tf_sfc::FailureReason::OVERLAP_TOO_SMALL;
+    return false;
+  }
+  if (junction_refinement_used)
+  {
+    build_info.strategy += "_overlap_local_refined";
+  }
+
   const bool point_count_valid =
       static_cast<int>(seed_path.size()) == covered_piece_num + 1;
   bool seed_edges_valid = point_count_valid;
