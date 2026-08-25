@@ -44,6 +44,26 @@ private:
                             const double map_resolution,
                             const OccupancyQuery &is_occupied) const;
 
+  SpaceState buildFaceBoundedCandidate(const PointVector &samples,
+                                       const Eigen::Vector3d &anchor,
+                                       const Eigen::Matrix3d &frame,
+                                       const Eigen::Vector3d &lower,
+                                       const Eigen::Vector3d &upper,
+                                       const double map_resolution,
+                                       const OccupancyQuery &is_occupied,
+                                       HPoly &hpoly,
+                                       int &obstacle_face_count,
+                                       int &obstacle_point_count,
+                                       bool &face_budget_saturated) const;
+
+  SpaceState collectCandidateObstacles(const Eigen::Vector3d &anchor,
+                                       const Eigen::Matrix3d &frame,
+                                       const Eigen::Vector3d &lower,
+                                       const Eigen::Vector3d &upper,
+                                       const double map_resolution,
+                                       const OccupancyQuery &is_occupied,
+                                       PointVector &obstacles) const;
+
   static HPoly boundsToHPoly(const Eigen::Vector3d &anchor,
                             const Eigen::Matrix3d &frame,
                             const Eigen::Vector3d &lower,
