@@ -196,6 +196,12 @@ v12.1 的 `overlap_too_small` 若伴随 `seed_path_point_count=0`，表示 raw A
 
 正式比较时两项必须在 Liu、OBB 和 TF-SFC 间保持相同。成功移动时 `seed_path_strategy` 带 `_overlap_local_refined`；搜索空间内无可行接头时带 `_overlap_local_refine_failed`。
 
+### v12.3：使用安全折线生成走廊包络
+
+若 seed 已显示 `_overlap_local_refined`、`seed_path_edge_valid=1`，但第 0 段成功而第 1 段出现内部采样点 `obstacle_separation_failure`，说明高阶初始 MINCO 曲线在折点之间过冲。v12.3 中 OBB 与 TF-SFC 改为围绕已连续验碰的直线 seed segment 生成走廊；初始 MINCO piece 只提供方向提示。优化后的曲线仍需要通过硬接头参数化、段内代价、碰撞复检和最终走廊门限。
+
+本轮使用独立标签 `proposed_pca_f12_v12_3_line_seed`。若至少两个连续走廊有效，在线 certified-prefix 配置会进入优化器；未覆盖尾段仍按 `outside_local_map` 或 `piece_budget_tail` 记录。
+
 ### 自定义日志目录
 
 ```bash
