@@ -28,6 +28,10 @@
     <arg name="odom_topic"/>
     <arg name="tf_sfc_enabled" default="false"/>
     <arg name="tf_sfc_corridor_method" default="obb"/>
+    <arg name="tf_sfc_max_faces" default="12"/>
+    <arg name="tf_sfc_max_obs_faces" default="6"/>
+    <arg name="tf_sfc_max_inflation_distance" default="1.0"/>
+    <arg name="tf_sfc_inflation_step" default="0.10"/>
     <arg name="tf_sfc_use_projection" default="true"/>
     <arg name="tf_sfc_use_soft_penalty" default="true"/>
     <arg name="tf_sfc_allow_partial_corridors" default="true"/>
@@ -86,6 +90,10 @@
         <arg name="use_multitopology_trajs" value="false" />
         <arg name="tf_sfc_enabled" value="$(arg tf_sfc_enabled)"/>
         <arg name="tf_sfc_corridor_method" value="$(arg tf_sfc_corridor_method)"/>
+        <arg name="tf_sfc_max_faces" value="$(arg tf_sfc_max_faces)"/>
+        <arg name="tf_sfc_max_obs_faces" value="$(arg tf_sfc_max_obs_faces)"/>
+        <arg name="tf_sfc_max_inflation_distance" value="$(arg tf_sfc_max_inflation_distance)"/>
+        <arg name="tf_sfc_inflation_step" value="$(arg tf_sfc_inflation_step)"/>
         <arg name="tf_sfc_use_projection" value="$(arg tf_sfc_use_projection)"/>
         <arg name="tf_sfc_use_soft_penalty" value="$(arg tf_sfc_use_soft_penalty)"/>
         <arg name="tf_sfc_allow_partial_corridors" value="$(arg tf_sfc_allow_partial_corridors)"/>
