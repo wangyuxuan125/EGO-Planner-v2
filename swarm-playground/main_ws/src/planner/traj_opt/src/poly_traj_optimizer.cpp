@@ -823,11 +823,49 @@ namespace ego_planner
       else if (requested_corridor_method == "obb" ||
                requested_corridor_method == "tf_sfc")
       {
-        jerkOpt_.generate(guidedInnerPts, initT);
-        const ros::WallTime inflation_started = ros::WallTime::now();
-        corridor_ok = tf_sfc_manager_->generate(jerkOpt_.getTraj(), tf_corridors_);
-        tf_sfc_inflation_ms +=
-            (ros::WallTime::now() - inflation_started).toSec() * 1000.0;
+        // A convex collision-free corridor cannot contain a seed segment that
+        // already crosses inflated occupancy.  GCOPTER naturally receives an
+        // RRT* route; EGO's ordinary initial MINCO trajectory is not guaranteed
+        // to be collision-free because rebound optimization normally repairs it.
+        // Reuse the same existing A* seed builder as the Liu baseline so OBB and
+        // proposed TF-SFC differ only in corridor construction, not in search.
+        tf_sfc::PointVector seed_path;
+        int covered_piece_num = 0;
+        tf_sfc::FailureReason uncovered_failure_reason =
+            tf_sfc::FailureReason::NONE;
+        tf_sfc::FailureReason seed_failure_reason =
+            tf_sfc::FailureReason::NONE;
+        if (!buildFixedPieceSeedPath(
+                grid_map_, a_star_, iniState.col(0), iniState.col(1),
+                finState.col(0), piece_num_,
+                tf_sfc_parameters_.allow_partial_corridors,
+                tf_sfc_parameters_.min_valid_pieces,
+                tf_sfc_parameters_.decomp_initial_velocity_segment,
+                tf_sfc_parameters_.decomp_initial_velocity_threshold,
+                tf_sfc_parameters_.decomp_degenerate_seed_length,
+                seed_path, covered_piece_num, uncovered_failure_reason,
+                seed_failure_reason, seed_path_build_info))
+        {
+          tf_sfc::Corridor failed;
+          failed.metrics.piece_id = 0;
+          failed.metrics.failure_reason = seed_failure_reason;
+          tf_corridors_.push_back(failed);
+        }
+        else
+        {
+          for (int point_id = 1;
+               point_id <= covered_piece_num && point_id < piece_num_;
+               ++point_id)
+          {
+            guidedInnerPts.col(point_id - 1) = seed_path[point_id];
+          }
+          jerkOpt_.generate(guidedInnerPts, initT);
+          const ros::WallTime inflation_started = ros::WallTime::now();
+          corridor_ok =
+              tf_sfc_manager_->generate(jerkOpt_.getTraj(), tf_corridors_);
+          tf_sfc_inflation_ms +=
+              (ros::WallTime::now() - inflation_started).toSec() * 1000.0;
+        }
       }
       else
       {
