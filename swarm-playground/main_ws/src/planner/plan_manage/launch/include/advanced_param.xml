@@ -63,6 +63,7 @@
     <arg name="tf_sfc_decomp_initial_velocity_segment" default="0.40"/>
     <arg name="tf_sfc_decomp_initial_velocity_threshold" default="0.20"/>
     <arg name="tf_sfc_decomp_degenerate_seed_length" default="0.10"/>
+    <arg name="tf_sfc_decomp_retry_seed_validation_without_velocity" default="true"/>
     <!-- main node -->
     <!-- <node pkg="ego_planner" name="ego_planner_node" type="ego_planner_node" output="screen" launch-prefix="valgrind"> -->
     <node pkg="ego_planner" name="drone_$(arg drone_id)_ego_planner_node" type="ego_planner_node" output="screen">
@@ -203,5 +204,6 @@
         <param name="tf_sfc/decomp_initial_velocity_segment" value="$(arg tf_sfc_decomp_initial_velocity_segment)" type="double"/>
         <param name="tf_sfc/decomp_initial_velocity_threshold" value="$(arg tf_sfc_decomp_initial_velocity_threshold)" type="double"/>
         <param name="tf_sfc/decomp_degenerate_seed_length" value="$(arg tf_sfc_decomp_degenerate_seed_length)" type="double"/>
+        <param name="tf_sfc/decomp_retry_seed_validation_without_velocity" value="$(arg tf_sfc_decomp_retry_seed_validation_without_velocity)" type="bool"/>
     </node>
 </launch>

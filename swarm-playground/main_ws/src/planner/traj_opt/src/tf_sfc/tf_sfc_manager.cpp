@@ -228,19 +228,26 @@ bool TfSfcManager::generateEllipsoidDecomp(const PointVector &seed_path,
   polyhedrons.reserve(path.size() - 1);
   bool decomp_ok = true;
   const auto segment_is_free = [&](const Vec3f &start, const Vec3f &finish) {
-    const double length = (finish - start).norm();
-    const int sample_count = std::max(
-        1, static_cast<int>(std::ceil(length /
-                                      std::max(0.5 * resolution, 1.0e-3))));
-    for (int sample_id = 0; sample_id <= sample_count; ++sample_id)
+    const auto point_is_free = [&](const Vec3f &point) {
+      return grid_map_->isInInflatedMap(point) &&
+             grid_map_->getInflateOccupancy(point) == 0;
+    };
+    if (!point_is_free(start) || !point_is_free(finish))
     {
-      const double alpha = static_cast<double>(sample_id) /
-                           static_cast<double>(sample_count);
-      const Vec3f point = (1.0 - alpha) * start + alpha * finish;
-      if (!grid_map_->isInInflatedMap(point) ||
-          grid_map_->getInflateOccupancy(point) != 0)
+      return false;
+    }
+    RayCaster raycaster;
+    Eigen::Vector3d voxel;
+    if (raycaster.setInput(start / resolution, finish / resolution))
+    {
+      while (raycaster.step(voxel))
       {
-        return false;
+        const Vec3f center =
+            ((voxel.array() + 0.5) * resolution).matrix();
+        if (!point_is_free(center))
+        {
+          return false;
+        }
       }
     }
     return true;

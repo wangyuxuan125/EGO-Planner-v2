@@ -82,7 +82,7 @@ roslaunch ego_planner single_drone_interactive.launch \
   tf_sfc_min_overlap_radius:=0.08 \
   tf_sfc_use_projection:=true \
   tf_sfc_use_soft_penalty:=true \
-  tf_sfc_experiment_tag:=pca_obb_hard_junction_v7
+  tf_sfc_experiment_tag:=pca_obb_hard_junction_v8
 ```
 
 ### EGO + Frenet OBB-SFC 消融
@@ -98,7 +98,7 @@ roslaunch ego_planner single_drone_interactive.launch \
   tf_sfc_hard_corridor_parameterization:=true \
   tf_sfc_use_projection:=true \
   tf_sfc_use_soft_penalty:=true \
-  tf_sfc_experiment_tag:=frenet_obb_hard_junction_v7
+  tf_sfc_experiment_tag:=frenet_obb_hard_junction_v8
 ```
 
 方向模式为 `0=Frenet`、`1=PCA`、`2=Sensitivity Gramian`。当前 MVP 尚未从 MINCO 自动构造 Gramian；模式 2 没有外部有效 Gramian 时会回退到 PCA，并在 CSV 中记录 `direction_fallback_count`。因此当前不能把模式 2 的回退结果作为完整灵敏度方法结果。
@@ -128,7 +128,8 @@ roslaunch ego_planner single_drone_interactive.launch \
   tf_sfc_decomp_initial_velocity_segment:=0.40 \
   tf_sfc_decomp_initial_velocity_threshold:=0.20 \
   tf_sfc_decomp_degenerate_seed_length:=0.10 \
-  tf_sfc_experiment_tag:=liu_hard_junction_v7
+  tf_sfc_decomp_retry_seed_validation_without_velocity:=true \
+  tf_sfc_experiment_tag:=liu_hard_junction_v8
 ```
 
 该分支先调用 EGO 已有 A* 生成无碰撞骨架，做视线简化后按 MINCO piece 预算细分，再逐段调用 `EllipsoidDecomp3D::dilate`。TF-SFC 的这次 A* 调用严格限制在当前膨胀局部地图内，不能把地图外未知空间当作自由空间；这一限制不改变原始 EGO 的其他 A* 调用。为提高相邻多面体在折点处的公共内域，每个分解 seed 段会沿自身切向向共享折点外延伸，延伸部分逐点检查局部地图；遇到障碍或边界时自动折半回退。延伸量由 `tf_sfc_decomp_overlap_extension` 控制并限制为当前段长度的 45% 以下。`0` 可关闭该优化，用于消融实验；它不会降低 `tf_sfc_min_overlap_radius` 的认证阈值。
@@ -137,13 +138,15 @@ EGO 使用滚动局部地图；当规划视野大于当前地图范围时，只�
 
 `single_drone_interactive.launch` 对 EGO 回退默认采用严格模式（`tf_sfc_allow_ego_fallback=false`）；只有明确进行工程可用性测试时才建议手动开启回退。
 
-v7 默认启用 `tf_sfc_hard_corridor_parameterization`。对于每个 MINCO 内部连接点，若左右 piece 都有有效走廊，代码枚举两个半空间集合交集的顶点；若只有一侧有效，则枚举该侧走廊顶点。优化变量经归一化平方权重映射为这些顶点的凸组合，因此连接点在每次 L-BFGS 迭代中都严格位于对应交集/走廊内。这与 GCOPTER 的 `forwardP/backwardGradP` 参数化作用相同。完全没有走廊覆盖的尾部连接点仍使用 3 维自由坐标。`tf_sfc_hard_max_vertices` 只在异常复杂多面体上限制变量数；被保留顶点的凸包仍是原交集的安全子集。
+v8 延续 v7 的 `tf_sfc_hard_corridor_parameterization`。对于每个 MINCO 内部连接点，若左右 piece 都有有效走廊，代码枚举两个半空间集合交集的顶点；若只有一侧有效，则枚举该侧走廊顶点。优化变量经归一化平方权重映射为这些顶点的凸组合，因此连接点在每次 L-BFGS 迭代中都严格位于对应交集/走廊内。这与 GCOPTER 的 `forwardP/backwardGradP` 参数化作用相同。完全没有走廊覆盖的尾部连接点仍使用 3 维自由坐标。`tf_sfc_hard_max_vertices` 只在异常复杂多面体上限制变量数；被保留顶点的凸包仍是原交集的安全子集。
 
 这里的“硬约束”特指 **MINCO 连接点硬约束**，不能写成“整条连续多项式已被严格限制在走廊内”。piece 内曲线仍通过 `tf_sfc_use_soft_penalty` 的采样半空间代价参与优化，并由最终密集采样门限拒绝未解决越界。Liu et al. 论文的式 (3) 将 `A_i^T Phi_i(t) < b_i` 写成 QP 约束，但正文明确说明实际采用 sample-based confinement；Elastic-Tracker 同样组合了走廊/交集内的结点参数化与曲线采样软惩罚。因此论文中建议使用“hard corridor-junction parameterization + sampled trajectory penalty/certification”这一准确表述。
 
 严格走廊终检默认开启。优化后的轨迹若在任一有效走廊 piece 上出现超过 `tf_sfc_max_final_violation` 的采样半空间越界，优化器会将走廊权重乘以 `tf_sfc_enforcement_weight_multiplier`，从当前解继续优化，最多执行 `tf_sfc_max_enforcement_passes` 次。v6 将倍率从 10 降为 3，并只接受有限、通过 EGO 精细碰撞检查、且走廊最大越界至少改善 `tf_sfc_enforcement_min_improvement` 的候选；发散、碰撞、群体净空失败、求解器异常或不再改善时恢复本轮最佳安全候选并将本次规划记为失败。这样回滚用于保存诊断和避免污染下一次重规划，不会把仍超过 1 mm 阈值的轨迹伪装成成功。无走廊的 `outside_local_map`、`piece_budget_tail` 等尾段不参与该终检。
 
-EllipsoidDecomp 的 v6 seed 还增加两项稳定性处理：有足够初速度时，首段先沿速度方向构造并逐点验碰，再从该点执行 A*；起终点落在同一体素甚至完全重合时，使用按“速度方向、±x、±y、±z”依次尝试的短探针，只有局部地图确认无碰撞后才用于分解。短探针会按现有 MINCO piece 数细分，因此在 `allow_partial_corridors=false` 下也不会因零长度 A* 路径直接退化为 `insufficient_pieces`。
+EllipsoidDecomp 的 seed 有两项稳定性处理：有足够初速度时，首段先沿速度方向构造并验碰，再从该点执行 A*；起终点落在同一体素甚至完全重合时，使用按“速度方向、±x、±y、±z”依次尝试的短探针，只有局部地图确认无碰撞后才用于分解。短探针会按现有 MINCO piece 数细分，因此在 `allow_partial_corridors=false` 下也不会因零长度 A* 路径直接退化为 `insufficient_pieces`。
+
+v8 将 seed 线段检查改为三维体素 DDA 射线遍历，覆盖对角线穿过的每个栅格，避免均匀采样漏掉薄障碍体素。如果速度对齐 A* 已返回路径、但最终细分 seed 在 DecompUtil 前复检为 `seed_path_occupied`，默认以当前状态重建一次普通 A* seed；该行为由 `tf_sfc_decomp_retry_seed_validation_without_velocity` 控制。正式配置保持 `true`；设置为 `false` 可复现无二次重建的消融。日志会记录尝试、回退原因和原失败点，二次重建仍失败时不会回退 EGO。
 
 ### 自定义日志目录
 
@@ -179,20 +182,20 @@ rostopic echo -n 1 /drone_0_ego_planner_node/tf_sfc/polyhedron_array
 默认输出：
 
 ```text
-$HOME/tf_sfc_results/ego/ego_runs_v7_drone_0.csv
-$HOME/tf_sfc_results/ego/ego_corridors_v7_drone_0.csv
+$HOME/tf_sfc_results/ego/ego_runs_v8_drone_0.csv
+$HOME/tf_sfc_results/ego/ego_corridors_v8_drone_0.csv
 ```
 
-- `ego_runs_v7_drone_<id>.csv`：每次优化调用一行。新增 `hard_parameterization_*`、硬约束连接点数/总数、空间变量数，以及优化前后的 `max_junction_violation_*`。正常启用硬参数化时，后两项应仅有浮点误差量级；曲线级 `max_corridor_violation_*` 仍可能非零，二者不可混用。其余字段继续记录 goal/replan/attempt、耗时、seed、候选回滚和最终走廊认证。
-- `ego_corridors_v7_drone_<id>.csv`：每个轨迹分段一行；有效段记录方法、面数、生成时间、宽度代理、样本余量和相邻重叠半径。顶点/交集构造失败额外记录 `hard_parameterization_failure`。
+- `ego_runs_v8_drone_<id>.csv`：每次优化调用一行。除 v7 的硬参数化、连接点违反量、goal/replan/attempt、耗时和走廊认证字段外，新增 `initial_velocity_seed_attempted`、`velocity_seed_fallback_used`、`velocity_seed_fallback_reason`、`seed_validation_failure_point_id`。最终安全失败拆分为 `obstacle_collision_failure` 与 `swarm_clearance_failure`，并由 `final_obstacle_collision`、`final_swarm_clearance_failure`、`terminal_failure_reason` 复核。
+- `ego_corridors_v8_drone_<id>.csv`：每个轨迹分段一行；有效段记录方法、面数、生成时间、宽度代理、样本余量和相邻重叠半径。顶点/交集构造失败额外记录 `hard_parameterization_failure`。
 
 文件使用追加模式。不要在同一标签下混入不同地图或参数；建议每个场景使用独立目录或唯一 `tf_sfc_experiment_tag`。
 
 快速查看：
 
 ```bash
-head -n 5 $HOME/tf_sfc_results/ego/ego_runs_v7_drone_0.csv
-head -n 5 $HOME/tf_sfc_results/ego/ego_corridors_v7_drone_0.csv
+head -n 5 $HOME/tf_sfc_results/ego/ego_runs_v8_drone_0.csv
+head -n 5 $HOME/tf_sfc_results/ego/ego_corridors_v8_drone_0.csv
 ```
 
 ## 4. 当前可用于论文统计的字段
@@ -206,7 +209,7 @@ head -n 5 $HOME/tf_sfc_results/ego/ego_corridors_v7_drone_0.csv
 下面的命令只使用 Python 标准库：
 
 ```bash
-python3 - $HOME/tf_sfc_results/ego/ego_runs_v7_drone_0.csv <<'PY'
+python3 - $HOME/tf_sfc_results/ego/ego_runs_v8_drone_0.csv <<'PY'
 import csv, math, statistics, sys
 
 rows = list(csv.DictReader(open(sys.argv[1], newline='')))

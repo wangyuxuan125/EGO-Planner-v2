@@ -56,6 +56,7 @@
     <arg name="tf_sfc_decomp_initial_velocity_segment" default="0.40"/>
     <arg name="tf_sfc_decomp_initial_velocity_threshold" default="0.20"/>
     <arg name="tf_sfc_decomp_degenerate_seed_length" default="0.10"/>
+    <arg name="tf_sfc_decomp_retry_seed_validation_without_velocity" default="true"/>
     <!-- main algorithm params -->
     <include file="$(find ego_planner)/launch/include/advanced_param.xml">
         <arg name="drone_id" value="$(arg drone_id)"/>
@@ -113,6 +114,7 @@
         <arg name="tf_sfc_decomp_initial_velocity_segment" value="$(arg tf_sfc_decomp_initial_velocity_segment)"/>
         <arg name="tf_sfc_decomp_initial_velocity_threshold" value="$(arg tf_sfc_decomp_initial_velocity_threshold)"/>
         <arg name="tf_sfc_decomp_degenerate_seed_length" value="$(arg tf_sfc_decomp_degenerate_seed_length)"/>
+        <arg name="tf_sfc_decomp_retry_seed_validation_without_velocity" value="$(arg tf_sfc_decomp_retry_seed_validation_without_velocity)"/>
         <!-- 1: use 2D Nav Goal to select goal  -->
         <!-- 2: use global waypoints below  -->
         <arg name="flight_type" value="$(arg flight_type)" />

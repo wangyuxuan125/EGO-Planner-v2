@@ -39,10 +39,11 @@ EGO-Planner-v2's original rebound, restart, swarm, and final collision-check pat
   MINCO piece budget, the optimizer keeps a certified prefix and labels the
   unconstrained final segment `piece_budget_tail` instead of rapidly rejecting
   every replan.
-- Schema-v7 experiment logs group optimizer calls by goal/replan/attempt,
+- Schema-v8 experiment logs group optimizer calls by goal/replan/attempt,
   record sampled corridor penalty and maximum violation before and after
   L-BFGS, and expose bounded penalty-continuation passes plus strict final
-  rejection.
+  rejection. They also record velocity-seed retry provenance and distinguish
+  terminal obstacle collision from swarm-clearance failure.
 - Configurable EGO fallback. Operational launches may allow fallback; strict
   experiments can reject generation failures instead of silently counting an
   original-EGO result as TF-SFC success.
@@ -84,6 +85,7 @@ The launch files expose the following private ROS parameters:
 | `tf_sfc/penalty_epsilon` | Interior buffer used by the soft penalty. |
 | `tf_sfc/decomp_local_bbox_{forward,lateral,vertical}` | Local EllipsoidDecomp bounding-box dimensions. |
 | `tf_sfc/decomp_overlap_extension` | Collision-checked tangent extension in metres; `0` disables it for ablation. |
+| `tf_sfc/decomp_retry_seed_validation_without_velocity` | Retry ordinary A* once when a velocity-aligned seed fails final occupancy validation; defaults to `true`. |
 
 The hard mapping constrains junction points only. Polynomial interiors still use
 the sampled soft penalty and final sampled certification; this is not a

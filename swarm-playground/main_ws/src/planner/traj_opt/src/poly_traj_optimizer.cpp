@@ -29,15 +29,7 @@ SegmentState segmentState(const GridMap::Ptr &grid_map,
   {
     return SegmentState::INVALID_INPUT;
   }
-  const double resolution = grid_map->getResolution();
-  const double length = (finish - start).norm();
-  const int samples = std::max(1, static_cast<int>(std::ceil(length /
-                                                             std::max(0.5 * resolution, 1.0e-3))));
-  for (int sample_id = 0; sample_id <= samples; ++sample_id)
-  {
-    const double alpha = static_cast<double>(sample_id) /
-                         static_cast<double>(samples);
-    const Eigen::Vector3d point = (1.0 - alpha) * start + alpha * finish;
+  const auto point_state = [&](const Eigen::Vector3d &point) {
     if (!grid_map->isInInflatedMap(point))
     {
       return SegmentState::OUTSIDE_MAP;
@@ -45,6 +37,38 @@ SegmentState segmentState(const GridMap::Ptr &grid_map,
     if (grid_map->getInflateOccupancy(point) != 0)
     {
       return SegmentState::OCCUPIED;
+    }
+    return SegmentState::FREE;
+  };
+  SegmentState state = point_state(start);
+  if (state != SegmentState::FREE)
+  {
+    return state;
+  }
+  state = point_state(finish);
+  if (state != SegmentState::FREE)
+  {
+    return state;
+  }
+
+  // Traverse every intersected voxel rather than sampling along the segment.
+  // Uniform samples can miss a voxel on diagonal 3-D rays even at 0.5-cell
+  // spacing, which previously allowed a velocity-aligned seed to pass here
+  // and fail the point-wise DecompUtil validation immediately afterwards.
+  const double resolution = grid_map->getResolution();
+  RayCaster raycaster;
+  Eigen::Vector3d voxel;
+  if (raycaster.setInput(start / resolution, finish / resolution))
+  {
+    while (raycaster.step(voxel))
+    {
+      const Eigen::Vector3d center =
+          ((voxel.array() + 0.5) * resolution).matrix();
+      state = point_state(center);
+      if (state != SegmentState::FREE)
+      {
+        return state;
+      }
     }
   }
   return SegmentState::FREE;
@@ -69,7 +93,11 @@ ego_planner::tf_sfc::FailureReason segmentFailureReason(const SegmentState state
 struct SeedPathBuildInfo
 {
   std::string strategy = "astar";
+  bool initial_velocity_seed_attempted = false;
   bool initial_velocity_seed_used = false;
+  bool velocity_seed_fallback_used = false;
+  std::string velocity_seed_fallback_reason = "none";
+  int seed_validation_failure_point_id = -1;
 };
 
 bool buildFixedPieceSeedPath(const GridMap::Ptr &grid_map,
@@ -233,14 +261,29 @@ bool buildFixedPieceSeedPath(const GridMap::Ptr &grid_map,
     if (start_velocity.norm() > initial_velocity_threshold &&
         initial_velocity_segment_length > 0.0 && piece_num > 1)
     {
+      build_info.initial_velocity_seed_attempted = true;
       const Eigen::Vector3d candidate =
           start + initial_velocity_segment_length * start_velocity.normalized();
-      if ((candidate - seed_finish).norm() > 0.5 * resolution &&
-          segmentState(grid_map, start, candidate) == SegmentState::FREE)
+      const bool prefix_has_room =
+          (candidate - seed_finish).norm() > 0.5 * resolution;
+      const SegmentState prefix_state =
+          prefix_has_room ? segmentState(grid_map, start, candidate)
+                          : SegmentState::INVALID_INPUT;
+      if (prefix_has_room && prefix_state == SegmentState::FREE)
       {
         search_start = candidate;
         build_info.initial_velocity_seed_used = true;
         build_info.strategy = "velocity_aligned_astar";
+      }
+      else
+      {
+        build_info.velocity_seed_fallback_used = true;
+        build_info.velocity_seed_fallback_reason =
+            prefix_has_room
+                ? ego_planner::tf_sfc::failureReasonName(
+                      segmentFailureReason(prefix_state))
+                : "velocity_prefix_too_close";
+        build_info.strategy = "astar_velocity_prefix_fallback";
       }
     }
 
@@ -252,7 +295,9 @@ bool buildFixedPieceSeedPath(const GridMap::Ptr &grid_map,
       // A velocity-aligned prefix is a robustness aid, not a reason to lose an
       // otherwise valid A* route.
       build_info.initial_velocity_seed_used = false;
-      build_info.strategy = "astar_velocity_fallback";
+      build_info.velocity_seed_fallback_used = true;
+      build_info.velocity_seed_fallback_reason = "velocity_astar_failure";
+      build_info.strategy = "astar_velocity_search_fallback";
       search_start = start;
       search_result =
           a_star->AstarSearch(resolution, search_start, seed_finish, true);
@@ -417,6 +462,9 @@ namespace ego_planner
     bool hard_parameterization_active = false;
     hard_parameterization_active_ = false;
     bool final_collision_free = false;
+    bool final_obstacle_collision = false;
+    bool final_swarm_clearance_failure = false;
+    std::string terminal_failure_reason = "none";
     bool corridor_retry_requested = false;
     bool strict_corridor_rejected = false;
     const std::string requested_corridor_method = tf_sfc_parameters_.enabled
@@ -503,6 +551,96 @@ namespace ego_planner
                                                                   piece_num_,
                                                                   uncovered_failure_reason,
                                                                   tf_corridors_);
+          tf_sfc::FailureReason first_generation_failure =
+              tf_sfc::FailureReason::NONE;
+          int first_generation_failure_point_id = -1;
+          for (const tf_sfc::Corridor &corridor : tf_corridors_)
+          {
+            if (!corridor.metrics.valid)
+            {
+              first_generation_failure = corridor.metrics.failure_reason;
+              first_generation_failure_point_id = corridor.metrics.piece_id;
+              break;
+            }
+          }
+          if (!corridor_ok &&
+              tf_sfc_parameters_.decomp_retry_seed_validation_without_velocity &&
+              seed_path_build_info.initial_velocity_seed_used &&
+              first_generation_failure ==
+                  tf_sfc::FailureReason::SEED_PATH_OCCUPIED)
+          {
+            // The velocity prefix can be valid when it is proposed but stale
+            // or conservatively occupied when DecompUtil consumes the final
+            // subdivided seed. Rebuild the complete seed from the current
+            // state with ordinary A* once instead of rejecting immediately.
+            ROS_WARN(
+                "TF-SFC velocity-aligned seed failed final occupancy "
+                "validation at point %d; retrying once with ordinary A*.",
+                first_generation_failure_point_id);
+            tf_sfc::PointVector fallback_seed_path;
+            int fallback_covered_piece_num = 0;
+            tf_sfc::FailureReason fallback_uncovered_failure_reason =
+                tf_sfc::FailureReason::NONE;
+            tf_sfc::FailureReason fallback_seed_failure_reason =
+                tf_sfc::FailureReason::NONE;
+            SeedPathBuildInfo fallback_build_info;
+            const bool fallback_seed_ok = buildFixedPieceSeedPath(
+                grid_map_, a_star_, iniState.col(0), iniState.col(1),
+                finState.col(0), piece_num_,
+                tf_sfc_parameters_.allow_partial_corridors,
+                tf_sfc_parameters_.min_valid_pieces,
+                0.0,
+                tf_sfc_parameters_.decomp_initial_velocity_threshold,
+                tf_sfc_parameters_.decomp_degenerate_seed_length,
+                fallback_seed_path, fallback_covered_piece_num,
+                fallback_uncovered_failure_reason,
+                fallback_seed_failure_reason, fallback_build_info);
+            fallback_build_info.initial_velocity_seed_attempted = true;
+            fallback_build_info.initial_velocity_seed_used = false;
+            fallback_build_info.velocity_seed_fallback_used = true;
+            fallback_build_info.velocity_seed_fallback_reason =
+                tf_sfc::failureReasonName(first_generation_failure);
+            fallback_build_info.seed_validation_failure_point_id =
+                first_generation_failure_point_id;
+            if (fallback_seed_ok)
+            {
+              fallback_build_info.strategy =
+                  "velocity_validation_fallback_" +
+                  fallback_build_info.strategy;
+              seed_path_build_info = fallback_build_info;
+              seed_path = fallback_seed_path;
+              covered_piece_num = fallback_covered_piece_num;
+              uncovered_failure_reason =
+                  fallback_uncovered_failure_reason;
+              guidedInnerPts = initInnerPts;
+              for (int point_id = 1;
+                   point_id <= covered_piece_num && point_id < piece_num_;
+                   ++point_id)
+              {
+                guidedInnerPts.col(point_id - 1) = seed_path[point_id];
+              }
+              corridor_ok = tf_sfc_manager_->generateEllipsoidDecomp(
+                  seed_path, piece_num_, uncovered_failure_reason,
+                  tf_corridors_);
+              ROS_INFO("TF-SFC ordinary-A* seed retry %s.",
+                       corridor_ok ? "succeeded" : "failed");
+            }
+            else
+            {
+              fallback_build_info.strategy =
+                  "velocity_validation_fallback_failed";
+              seed_path_build_info = fallback_build_info;
+              tf_corridors_.clear();
+              tf_sfc::Corridor failed;
+              failed.metrics.piece_id = 0;
+              failed.metrics.failure_reason = fallback_seed_failure_reason;
+              tf_corridors_.push_back(failed);
+              ROS_WARN("TF-SFC ordinary-A* seed retry could not build a "
+                       "valid seed (%s).",
+                       tf_sfc::failureReasonName(
+                           fallback_seed_failure_reason));
+            }
+          }
         }
       }
       else if (requested_corridor_method == "obb")
@@ -583,8 +721,16 @@ namespace ego_planner
           record.attempt_id = experiment_attempt_id_;
           record.touch_goal = touch_goal_;
           record.seed_path_strategy = seed_path_build_info.strategy;
+          record.initial_velocity_seed_attempted =
+              seed_path_build_info.initial_velocity_seed_attempted;
           record.initial_velocity_seed_used =
               seed_path_build_info.initial_velocity_seed_used;
+          record.velocity_seed_fallback_used =
+              seed_path_build_info.velocity_seed_fallback_used;
+          record.velocity_seed_fallback_reason =
+              seed_path_build_info.velocity_seed_fallback_reason;
+          record.seed_validation_failure_point_id =
+              seed_path_build_info.seed_validation_failure_point_id;
           record.tf_sfc_enabled = true;
           record.hard_parameterization_enabled =
               tf_sfc_parameters_.hard_corridor_parameterization;
@@ -614,6 +760,7 @@ namespace ego_planner
               }
             }
           }
+          record.terminal_failure_reason = record.first_failure_reason;
           if (tf_sfc_experiment_logger_ && tf_sfc_experiment_logger_->enabled())
           {
             tf_sfc_experiment_logger_->log(record, logged_corridors);
@@ -775,6 +922,9 @@ namespace ego_planner
       flag_success = false;
       flag_swarm_too_close = false;
       final_collision_free = false;
+      final_obstacle_collision = false;
+      final_swarm_clearance_failure = false;
+      terminal_failure_reason = "none";
       corridor_retry_requested = false;
 
       /* ---------- optimize ---------- */
@@ -815,6 +965,7 @@ namespace ego_planner
           }
           strict_corridor_rejected = tf_sfc_generated && !fallback_to_ego;
           candidate_invalid = true;
+          terminal_failure_reason = "nonfinite_decision";
           ROS_ERROR_THROTTLE(
               1.0,
               "Trajectory optimization produced a non-finite decision vector; "
@@ -843,6 +994,7 @@ namespace ego_planner
           }
           strict_corridor_rejected = tf_sfc_generated && !fallback_to_ego;
           candidate_invalid = true;
+          terminal_failure_reason = "nonfinite_trajectory";
           ROS_ERROR_THROTTLE(
               1.0,
               "Trajectory optimization produced a non-finite trajectory; "
@@ -884,6 +1036,8 @@ namespace ego_planner
                 rollbackCorridorCandidate("violation_not_improved");
                 strict_corridor_rejected = true;
                 final_collision_free = true;
+                terminal_failure_reason =
+                    "corridor_violation_not_improved";
                 ROS_ERROR_THROTTLE(
                     1.0,
                     "TF-SFC continuation did not improve sampled violation "
@@ -925,6 +1079,8 @@ namespace ego_planner
               {
                 rollbackCorridorCandidate("max_enforcement_passes");
                 strict_corridor_rejected = true;
+                terminal_failure_reason =
+                    "corridor_violation_limit";
                 ROS_ERROR_THROTTLE(
                     1.0,
                     "TF-SFC sampled final violation %.6f m exceeds %.6f m "
@@ -947,6 +1103,8 @@ namespace ego_planner
             {
               final_collision_free = true;
               strict_corridor_rejected = true;
+              terminal_failure_reason =
+                  "continuation_obstacle_collision";
               ROS_ERROR_THROTTLE(
                   1.0,
                   "TF-SFC continuation produced a colliding candidate; "
@@ -964,6 +1122,8 @@ namespace ego_planner
               fallback_to_ego = tf_sfc_generated;
             }
             flag_still_unsafe = true;
+            final_obstacle_collision = true;
+            terminal_failure_reason = "obstacle_collision";
             restart_nums++;
             PRINTF_COND("\033[32miter=%d,time(ms)=%5.3f, fine check collided, keep optimizing\n\033[0m", iter_num_, time_ms);
           }
@@ -975,6 +1135,8 @@ namespace ego_planner
           {
             final_collision_free = true;
             strict_corridor_rejected = true;
+            terminal_failure_reason =
+                "continuation_swarm_clearance";
             ROS_ERROR_THROTTLE(
                 1.0,
                 "TF-SFC continuation violated swarm clearance; restoring the "
@@ -983,6 +1145,8 @@ namespace ego_planner
           }
           PRINTF_COND("Swarm clearance not satisfied, keep optimizing. iter=%d,time(ms)=%5.3f, wei_swarm_mod_=%f\n", iter_num_, time_ms, wei_swarm_mod_);
           flag_still_unsafe = true;
+          final_swarm_clearance_failure = true;
+          terminal_failure_reason = "swarm_clearance";
           restart_nums++;
           wei_swarm_mod_ *= 2;
         }
@@ -994,6 +1158,7 @@ namespace ego_planner
         {
           final_collision_free = true;
           strict_corridor_rejected = true;
+          terminal_failure_reason = "continuation_solver_cancelled";
           ROS_ERROR_THROTTLE(
               1.0,
               "TF-SFC continuation was cancelled; restoring the best safe "
@@ -1010,6 +1175,7 @@ namespace ego_planner
           fallback_to_ego = tf_sfc_generated;
         }
         flag_force_return = true;
+        terminal_failure_reason = "solver_cancelled";
         rebound_times++;
         PRINTF_COND("iter=%d, time(ms)=%f, rebound\n", iter_num_, time_ms);
       }
@@ -1020,6 +1186,7 @@ namespace ego_planner
         {
           final_collision_free = true;
           strict_corridor_rejected = true;
+          terminal_failure_reason = "continuation_solver_error";
           ROS_ERROR_THROTTLE(
               1.0,
               "TF-SFC continuation failed in L-BFGS; restoring the best safe "
@@ -1027,6 +1194,7 @@ namespace ego_planner
           continue;
         }
         PRINTF_COND("iter=%d, time(ms)=%f, error\n", iter_num_, time_ms);
+        terminal_failure_reason = "solver_error";
         ROS_WARN_COND(VERBOSE_OUTPUT, "Solver error. Return = %d, %s. Skip this planning.", result, lbfgs::lbfgs_strerror(result));
       }
 
@@ -1061,7 +1229,9 @@ namespace ego_planner
       record.status = flag_success ? "success" :
                       (strict_corridor_rejected ? "corridor_violation_failure" :
                        (last_lbfgs_result == lbfgs::LBFGSERR_CANCELED ? "rebound_limit" :
-                        (flag_still_unsafe ? "collision_or_clearance_failure" : "solver_failure")));
+                        (final_obstacle_collision ? "obstacle_collision_failure" :
+                         (final_swarm_clearance_failure ? "swarm_clearance_failure" :
+                          "solver_failure"))));
       record.timestamp_s = t0.toSec();
       record.requested_method = requested_corridor_method;
       record.method = fallback_to_ego ? "ego" : requested_corridor_method;
@@ -1071,14 +1241,28 @@ namespace ego_planner
       record.attempt_id = experiment_attempt_id_;
       record.touch_goal = touch_goal_;
       record.seed_path_strategy = seed_path_build_info.strategy;
+      record.initial_velocity_seed_attempted =
+          seed_path_build_info.initial_velocity_seed_attempted;
       record.initial_velocity_seed_used =
           seed_path_build_info.initial_velocity_seed_used;
+      record.velocity_seed_fallback_used =
+          seed_path_build_info.velocity_seed_fallback_used;
+      record.velocity_seed_fallback_reason =
+          seed_path_build_info.velocity_seed_fallback_reason;
+      record.seed_validation_failure_point_id =
+          seed_path_build_info.seed_validation_failure_point_id;
       record.tf_sfc_enabled = tf_sfc_parameters_.enabled;
       record.direction_mode = requested_corridor_method == "obb"
                                   ? static_cast<int>(tf_sfc_parameters_.direction_mode)
                                   : -1;
       record.success = flag_success;
       record.collision_free = final_collision_free;
+      record.final_obstacle_collision = final_obstacle_collision;
+      record.final_swarm_clearance_failure =
+          final_swarm_clearance_failure;
+      record.terminal_failure_reason = flag_success
+                                           ? "none"
+                                           : terminal_failure_reason;
       record.tf_sfc_generated = tf_sfc_generated;
       record.fallback_to_ego = fallback_to_ego;
       record.projection_applied = projection_applied;
@@ -2877,6 +3061,9 @@ namespace ego_planner
              tf_sfc_parameters_.decomp_initial_velocity_threshold, 0.20);
     nh.param("tf_sfc/decomp_degenerate_seed_length",
              tf_sfc_parameters_.decomp_degenerate_seed_length, 0.10);
+    nh.param("tf_sfc/decomp_retry_seed_validation_without_velocity",
+             tf_sfc_parameters_.decomp_retry_seed_validation_without_velocity,
+             true);
 
     int direction_mode = static_cast<int>(tf_sfc::DirectionMode::PCA);
     nh.param("tf_sfc/direction_mode", direction_mode,

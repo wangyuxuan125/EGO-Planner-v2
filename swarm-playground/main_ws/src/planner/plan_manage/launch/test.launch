@@ -160,6 +160,7 @@
         <param name="tf_sfc/decomp_initial_velocity_segment" value="0.40" type="double"/>
         <param name="tf_sfc/decomp_initial_velocity_threshold" value="0.20" type="double"/>
         <param name="tf_sfc/decomp_degenerate_seed_length" value="0.10" type="double"/>
+        <param name="tf_sfc/decomp_retry_seed_validation_without_velocity" value="true" type="bool"/>
         <param name="tf_sfc/safety_margin" value="0.25" type="double"/>
         <param name="tf_sfc/min_overlap_radius" value="0.15" type="double"/>
         <param name="tf_sfc/max_inflation_distance" value="1.0" type="double"/>

@@ -97,6 +97,7 @@ struct Parameters
   bool allow_ego_fallback = true;
   bool enforce_final_corridor = true;
   bool hard_corridor_parameterization = true;
+  bool decomp_retry_seed_validation_without_velocity = true;
   bool visualization_enabled = true;
   bool log_enabled = true;
   std::string visualization_frame = "world";
