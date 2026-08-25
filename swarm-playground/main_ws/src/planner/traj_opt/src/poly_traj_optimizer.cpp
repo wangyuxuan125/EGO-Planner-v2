@@ -139,9 +139,10 @@ double pointInflatedClearance(const GridMap::Ptr &grid_map,
         {
           continue;
         }
-        const Eigen::Vector3d outside =
-            (point - voxel_center).cwiseAbs().array().max(half_voxel) -
-            Eigen::Vector3d::Constant(half_voxel).array();
+        Eigen::Vector3d outside =
+            (point - voxel_center).cwiseAbs() -
+            Eigen::Vector3d::Constant(half_voxel);
+        outside = outside.cwiseMax(Eigen::Vector3d::Zero());
         clearance = std::min(clearance, outside.norm());
       }
     }
