@@ -59,7 +59,8 @@ enum class FailureReason
   SEED_ASTAR_FAILURE = 12,
   SEED_PATH_OUTSIDE_MAP = 13,
   SEED_PATH_OCCUPIED = 14,
-  PIECE_BUDGET_TAIL = 15
+  PIECE_BUDGET_TAIL = 15,
+  HARD_PARAMETERIZATION_FAILURE = 16
 };
 
 inline const char *failureReasonName(const FailureReason reason)
@@ -82,6 +83,7 @@ inline const char *failureReasonName(const FailureReason reason)
   case FailureReason::SEED_PATH_OUTSIDE_MAP: return "seed_path_outside_map";
   case FailureReason::SEED_PATH_OCCUPIED: return "seed_path_occupied";
   case FailureReason::PIECE_BUDGET_TAIL: return "piece_budget_tail";
+  case FailureReason::HARD_PARAMETERIZATION_FAILURE: return "hard_parameterization_failure";
   }
   return "unknown";
 }
@@ -94,6 +96,7 @@ struct Parameters
   bool allow_partial_corridors = true;
   bool allow_ego_fallback = true;
   bool enforce_final_corridor = true;
+  bool hard_corridor_parameterization = true;
   bool visualization_enabled = true;
   bool log_enabled = true;
   std::string visualization_frame = "world";
@@ -107,6 +110,7 @@ struct Parameters
   int projection_passes = 4;
   int min_valid_pieces = 1;
   int max_enforcement_passes = 2;
+  int hard_max_vertices = 64;
   double safety_margin = 0.25;
   double min_overlap_radius = 0.15;
   double max_inflation_distance = 1.0;
@@ -115,6 +119,7 @@ struct Parameters
   double enforcement_weight_multiplier = 3.0;
   double enforcement_min_improvement = 1.0e-5;
   double max_final_violation = 1.0e-3;
+  double hard_vertex_tolerance = 1.0e-7;
   double penalty_epsilon = 0.02;
   double decomp_local_bbox_forward = 0.5;
   double decomp_local_bbox_lateral = 1.0;

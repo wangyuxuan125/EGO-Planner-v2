@@ -63,6 +63,7 @@ add_library( traj_opt
     src/tf_sfc/direction_provider.cpp
     src/tf_sfc/directional_inflator.cpp
     src/tf_sfc/experiment_logger.cpp
+    src/tf_sfc/hard_corridor_parameterization.cpp
     src/tf_sfc/tf_sfc_manager.cpp
     )
 target_link_libraries( traj_opt

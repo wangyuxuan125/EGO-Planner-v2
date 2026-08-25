@@ -33,6 +33,13 @@ struct ExperimentRunRecord
   bool tf_sfc_generated = false;
   bool fallback_to_ego = false;
   bool projection_applied = false;
+  bool hard_parameterization_enabled = false;
+  bool hard_parameterization_active = false;
+  int hard_constrained_junction_count = 0;
+  int hard_total_junction_count = 0;
+  int hard_spatial_variable_count = 0;
+  double max_junction_violation_initial_m = 0.0;
+  double max_junction_violation_final_m = 0.0;
   int lbfgs_result = 0;
   double total_planning_ms = 0.0;
   double optimizer_ms = 0.0;

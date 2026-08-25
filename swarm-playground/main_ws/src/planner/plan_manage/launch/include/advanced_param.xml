@@ -40,6 +40,9 @@
     <arg name="tf_sfc_allow_partial_corridors" default="true"/>
     <arg name="tf_sfc_allow_ego_fallback" default="false"/>
     <arg name="tf_sfc_enforce_final_corridor" default="true"/>
+    <arg name="tf_sfc_hard_corridor_parameterization" default="true"/>
+    <arg name="tf_sfc_hard_max_vertices" default="64"/>
+    <arg name="tf_sfc_hard_vertex_tolerance" default="0.0000001"/>
     <arg name="tf_sfc_max_enforcement_passes" default="2"/>
     <arg name="tf_sfc_enforcement_weight_multiplier" default="3.0"/>
     <arg name="tf_sfc_enforcement_min_improvement" default="0.00001"/>
@@ -170,6 +173,9 @@
         <param name="tf_sfc/allow_partial_corridors" value="$(arg tf_sfc_allow_partial_corridors)" type="bool"/>
         <param name="tf_sfc/allow_ego_fallback" value="$(arg tf_sfc_allow_ego_fallback)" type="bool"/>
         <param name="tf_sfc/enforce_final_corridor" value="$(arg tf_sfc_enforce_final_corridor)" type="bool"/>
+        <param name="tf_sfc/hard_corridor_parameterization" value="$(arg tf_sfc_hard_corridor_parameterization)" type="bool"/>
+        <param name="tf_sfc/hard_max_vertices" value="$(arg tf_sfc_hard_max_vertices)" type="int"/>
+        <param name="tf_sfc/hard_vertex_tolerance" value="$(arg tf_sfc_hard_vertex_tolerance)" type="double"/>
         <param name="tf_sfc/max_enforcement_passes" value="$(arg tf_sfc_max_enforcement_passes)" type="int"/>
         <param name="tf_sfc/enforcement_weight_multiplier" value="$(arg tf_sfc_enforcement_weight_multiplier)" type="double"/>
         <param name="tf_sfc/enforcement_min_improvement" value="$(arg tf_sfc_enforcement_min_improvement)" type="double"/>

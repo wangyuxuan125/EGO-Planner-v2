@@ -15,8 +15,11 @@ EGO-Planner-v2's original rebound, restart, swarm, and final collision-check pat
   and conservatively rejects occupied voxels whose volume intersects the box.
 - Per-piece face count, generation time, weighted directional width, sample slack,
   overlap radius, and direction-fallback metrics.
-- Optional junction projection and a frozen, piece-wise soft corridor penalty in
-  the existing MINCO/L-BFGS integration loop.
+- GCOPTER-style hard parameterization of MINCO junctions as convex combinations
+  of vertices of adjacent-corridor intersections, with analytic gradient
+  back-propagation. Optional projection remains an initialization preconditioner.
+- A frozen, piece-wise sampled soft corridor penalty and strict final sampled
+  gate for the polynomial between hard-constrained junctions.
 - A certified-prefix policy: a piece outside the current local map no longer
   discards preceding valid corridors. Invalid and skipped pieces carry explicit
   failure reasons and receive no corridor penalty.
@@ -36,7 +39,7 @@ EGO-Planner-v2's original rebound, restart, swarm, and final collision-check pat
   MINCO piece budget, the optimizer keeps a certified prefix and labels the
   unconstrained final segment `piece_budget_tail` instead of rapidly rejecting
   every replan.
-- Schema-v5 experiment logs group optimizer calls by goal/replan/attempt,
+- Schema-v7 experiment logs group optimizer calls by goal/replan/attempt,
   record sampled corridor penalty and maximum violation before and after
   L-BFGS, and expose bounded penalty-continuation passes plus strict final
   rejection.
@@ -62,9 +65,12 @@ The launch files expose the following private ROS parameters:
 | `tf_sfc/corridor_method` | `obb` for the TF-SFC MVP or `ellipsoid_decomp` for the Liu et al. baseline. |
 | `tf_sfc/direction_mode` | `0`: Frenet, `1`: PCA, `2`: sensitivity Gramian. |
 | `tf_sfc/use_projection` | Project inner junctions into adjacent-corridor intersections. |
+| `tf_sfc/hard_corridor_parameterization` | Keep MINCO junctions inside corridor/intersection vertex hulls for every optimizer iterate. |
+| `tf_sfc/hard_max_vertices` | Maximum retained vertices per constrained junction; retained hull remains a safe subset. |
+| `tf_sfc/hard_vertex_tolerance` | Numerical tolerance for H-to-V intersection enumeration. |
 | `tf_sfc/use_soft_penalty` | Add the frozen corridor hinge-squared penalty. |
 | `tf_sfc/allow_partial_corridors` | Use a continuous certified prefix in the known local map. |
-| `tf_sfc/allow_ego_fallback` | Allow operational fallback; set false for strict method evaluation. |
+| `tf_sfc/allow_ego_fallback` | Allow generation-time operational fallback; set false for strict method evaluation. An active hard mapping is not relabelled as original EGO mid-solve. |
 | `tf_sfc/visualization_enabled` | Publish valid corridor candidates for the DecompROS RViz plugin. |
 | `tf_sfc/visualization_frame` | Frame ID used by the corridor message; defaults to `world`. |
 | `tf_sfc/min_valid_pieces` | Minimum certified prefix length required to enable TF-SFC. |
@@ -79,10 +85,10 @@ The launch files expose the following private ROS parameters:
 | `tf_sfc/decomp_local_bbox_{forward,lateral,vertical}` | Local EllipsoidDecomp bounding-box dimensions. |
 | `tf_sfc/decomp_overlap_extension` | Collision-checked tangent extension in metres; `0` disables it for ablation. |
 
-For a first simulation ablation, enable PCA corridors and the soft penalty while
-leaving projection disabled. Projection is expected to do little when a corridor
-is generated from the same initial trajectory; the frozen penalty is the component
-that changes the subsequent optimization feasible region.
+The hard mapping constrains junction points only. Polynomial interiors still use
+the sampled soft penalty and final sampled certification; this is not a
+continuous-time containment proof. Disable `hard_corridor_parameterization` only
+for the explicit soft-only ablation.
 
 The visualization topic is private to the planner node:
 `/drone_<id>_ego_planner_node/tf_sfc/polyhedron_array`. An empty array means the

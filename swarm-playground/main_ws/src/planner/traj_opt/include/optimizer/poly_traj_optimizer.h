@@ -9,6 +9,7 @@
 #include <memory>
 #include "optimizer/lbfgs.hpp"
 #include "optimizer/tf_sfc/experiment_logger.h"
+#include "optimizer/tf_sfc/hard_corridor_parameterization.h"
 #include "optimizer/tf_sfc/tf_sfc_manager.h"
 #include <traj_utils/plan_container.hpp>
 #include "poly_traj_utils.hpp"
@@ -78,12 +79,15 @@ namespace ego_planner
     std::shared_ptr<tf_sfc::TfSfcManager> tf_sfc_manager_;
     std::unique_ptr<tf_sfc::ExperimentLogger> tf_sfc_experiment_logger_;
     tf_sfc::CorridorVector tf_corridors_;
+    tf_sfc::HardCorridorParameterization hard_corridor_parameterization_;
     ros::Publisher tf_sfc_polyhedron_pub_;
     // PtsChk_t pts_check_;
 
     int drone_id_;
     int cps_num_prePiece_;   // number of distinctive constraint points each piece
     int variable_num_;       // optimization variables
+    int spatial_variable_num_{0}; // direct or hard-parameterized junction variables
+    bool hard_parameterization_active_{false};
     int piece_num_;          // poly traj piece numbers
     int iter_num_;           // iteration of the solver
     std::vector<double> min_ellip_dist2_; // min trajectory distance in swarm

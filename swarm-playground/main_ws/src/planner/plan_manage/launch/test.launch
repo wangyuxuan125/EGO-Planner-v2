@@ -140,6 +140,9 @@
         <param name="tf_sfc/allow_partial_corridors" value="true" type="bool"/>
         <param name="tf_sfc/allow_ego_fallback" value="true" type="bool"/>
         <param name="tf_sfc/enforce_final_corridor" value="true" type="bool"/>
+        <param name="tf_sfc/hard_corridor_parameterization" value="true" type="bool"/>
+        <param name="tf_sfc/hard_max_vertices" value="64" type="int"/>
+        <param name="tf_sfc/hard_vertex_tolerance" value="0.0000001" type="double"/>
         <param name="tf_sfc/max_enforcement_passes" value="2" type="int"/>
         <param name="tf_sfc/enforcement_weight_multiplier" value="3.0" type="double"/>
         <param name="tf_sfc/enforcement_min_improvement" value="0.00001" type="double"/>

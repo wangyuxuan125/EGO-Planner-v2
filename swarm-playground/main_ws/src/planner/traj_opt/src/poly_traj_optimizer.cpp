@@ -414,6 +414,8 @@ namespace ego_planner
     bool tf_sfc_generated = false;
     bool fallback_to_ego = false;
     bool projection_applied = false;
+    bool hard_parameterization_active = false;
+    hard_parameterization_active_ = false;
     bool final_collision_free = false;
     bool corridor_retry_requested = false;
     bool strict_corridor_rejected = false;
@@ -433,6 +435,8 @@ namespace ego_planner
     std::string corridor_rollback_reason = "none";
     double best_corridor_violation_m =
         std::numeric_limits<double>::infinity();
+    double max_junction_violation_initial_m = 0.0;
+    double max_junction_violation_final_m = 0.0;
     tf_sfc::CorridorVector logged_corridors;
     tf_sfc::CorridorEvaluation initial_corridor_evaluation;
     multitopology_data_.initial_obstacles_avoided = false;
@@ -445,6 +449,7 @@ namespace ego_planner
 
     Eigen::MatrixXd guidedInnerPts = initInnerPts;
     tf_corridors_.clear();
+    hard_corridor_parameterization_.clear();
     if (tf_sfc_manager_)
     {
       tf_sfc_manager_->setCorridorPenaltyScale(1.0);
@@ -512,15 +517,11 @@ namespace ego_planner
         failed.metrics.failure_reason = tf_sfc::FailureReason::INVALID_INPUT;
         tf_corridors_.push_back(failed);
       }
-      tf_sfc_generation_ms = (ros::WallTime::now() - corridor_started).toSec() * 1000.0;
       // Keep a valid trajectory object for diagnostics even when corridor
       // generation is rejected before the optimizer starts.
       jerkOpt_.generate(guidedInnerPts, initT);
-      logged_corridors = tf_corridors_;
-      publishTfSfcCorridors(logged_corridors);
       if (corridor_ok)
       {
-        tf_sfc_generated = true;
         if (tf_sfc_parameters_.use_projection)
         {
           Eigen::MatrixXd projectedInnerPts = guidedInnerPts;
@@ -530,8 +531,38 @@ namespace ego_planner
             projection_applied = true;
           }
         }
+        if (tf_sfc_parameters_.hard_corridor_parameterization)
+        {
+          hard_parameterization_active =
+              hard_corridor_parameterization_.configure(
+                  tf_corridors_, piece_num_, tf_sfc_parameters_.hard_max_vertices,
+                  tf_sfc_parameters_.hard_vertex_tolerance);
+          hard_parameterization_active_ = hard_parameterization_active;
+          if (!hard_parameterization_active)
+          {
+            tf_sfc::Corridor failed;
+            failed.metrics.piece_id = 0;
+            failed.metrics.failure_reason =
+                tf_sfc::FailureReason::HARD_PARAMETERIZATION_FAILURE;
+            tf_corridors_.push_back(failed);
+            corridor_ok = false;
+          }
+        }
+        if (corridor_ok)
+        {
+          tf_sfc_generated = true;
+          max_junction_violation_initial_m =
+              hard_parameterization_active
+                  ? hard_corridor_parameterization_.maxJunctionViolation(
+                        guidedInnerPts)
+                  : 0.0;
+        }
       }
-      else
+      tf_sfc_generation_ms =
+          (ros::WallTime::now() - corridor_started).toSec() * 1000.0;
+      logged_corridors = tf_corridors_;
+      publishTfSfcCorridors(logged_corridors);
+      if (!corridor_ok)
       {
         if (!tf_sfc_parameters_.allow_ego_fallback)
         {
@@ -555,6 +586,10 @@ namespace ego_planner
           record.initial_velocity_seed_used =
               seed_path_build_info.initial_velocity_seed_used;
           record.tf_sfc_enabled = true;
+          record.hard_parameterization_enabled =
+              tf_sfc_parameters_.hard_corridor_parameterization;
+          record.hard_parameterization_active = false;
+          record.hard_total_junction_count = piece_num_ - 1;
           record.direction_mode = requested_corridor_method == "obb"
                                       ? static_cast<int>(tf_sfc_parameters_.direction_mode)
                                       : -1;
@@ -605,30 +640,74 @@ namespace ego_planner
       }
     }
 
+    spatial_variable_num_ = hard_parameterization_active
+                                ? hard_corridor_parameterization_.spatialVariableCount()
+                                : 3 * (piece_num_ - 1);
+    variable_num_ = spatial_variable_num_ + piece_num_;
+    std::vector<double> x_init(variable_num_, 0.0);
+    if (hard_parameterization_active)
+    {
+      Eigen::VectorXd spatial_initial;
+      if (!hard_corridor_parameterization_.encode(guidedInnerPts,
+                                                   spatial_initial))
+      {
+        ROS_ERROR("TF-SFC hard corridor parameterization could not encode the initial junctions.");
+        return false;
+      }
+      Eigen::Map<Eigen::VectorXd>(x_init.data(), spatial_variable_num_) =
+          spatial_initial;
+      Eigen::MatrixXd decoded_initial;
+      if (!hard_corridor_parameterization_.decode(spatial_initial,
+                                                   decoded_initial))
+      {
+        ROS_ERROR("TF-SFC hard corridor parameterization could not decode its initial junctions.");
+        return false;
+      }
+      guidedInnerPts = decoded_initial;
+      max_junction_violation_initial_m =
+          hard_corridor_parameterization_.maxJunctionViolation(
+              decoded_initial);
+    }
+    else
+    {
+      memcpy(x_init.data(), guidedInnerPts.data(),
+             guidedInnerPts.size() * sizeof(x_init[0]));
+    }
+    Eigen::Map<Eigen::VectorXd> Vt(x_init.data() + spatial_variable_num_,
+                                   initT.size());
+    RealT2VirtualT(initT, Vt);
     if (tf_sfc_generated && !fallback_to_ego && tf_sfc_manager_)
     {
-      // Snapshot the exact trajectory used to initialize L-BFGS after A* seed
-      // replacement and optional junction projection.
+      // Snapshot the exact hard-parameterized trajectory used to initialize
+      // L-BFGS, not the preimage seed supplied to the inverse mapping.
       jerkOpt_.generate(guidedInnerPts, initT);
       initial_corridor_evaluation =
           tf_sfc_manager_->evaluateTrajectory(jerkOpt_.getTraj());
     }
-
-    variable_num_ = 4 * (piece_num_ - 1) + 1;
-    double x_init[variable_num_];
-    memcpy(x_init, guidedInnerPts.data(), guidedInnerPts.size() * sizeof(x_init[0]));
-    Eigen::Map<Eigen::VectorXd> Vt(x_init + guidedInnerPts.size(), initT.size());
-    RealT2VirtualT(initT, Vt);
     min_ellip_dist2_.resize(swarm_trajs_->size());
 
     std::vector<double> best_corridor_x(variable_num_);
     bool best_corridor_candidate_valid = false;
     double best_corridor_cost = std::numeric_limits<double>::infinity();
     auto regenerateTrajectoryFromDecision = [&](const double *decision) {
-      Eigen::Map<const Eigen::MatrixXd> inner_points(
-          decision, 3, piece_num_ - 1);
+      Eigen::MatrixXd inner_points;
+      if (hard_parameterization_active)
+      {
+        const Eigen::Map<const Eigen::VectorXd> spatial(decision,
+                                                        spatial_variable_num_);
+        if (!hard_corridor_parameterization_.decode(spatial, inner_points))
+        {
+          inner_points = Eigen::MatrixXd::Constant(
+              3, piece_num_ - 1, std::numeric_limits<double>::quiet_NaN());
+        }
+      }
+      else
+      {
+        inner_points = Eigen::Map<const Eigen::MatrixXd>(
+            decision, 3, piece_num_ - 1);
+      }
       Eigen::Map<const Eigen::VectorXd> virtual_times(
-          decision + 3 * (piece_num_ - 1), piece_num_);
+          decision + spatial_variable_num_, piece_num_);
       Eigen::VectorXd real_times(piece_num_);
       VirtualT2RealT(virtual_times, real_times);
       jerkOpt_.generate(inner_points, real_times);
@@ -658,7 +737,7 @@ namespace ego_planner
       return true;
     };
     auto rememberCorridorCandidate = [&](const double violation) {
-      std::copy(x_init, x_init + variable_num_, best_corridor_x.begin());
+      std::copy(x_init.begin(), x_init.end(), best_corridor_x.begin());
       best_corridor_candidate_valid = true;
       best_corridor_cost = final_cost;
       best_corridor_violation_m = violation;
@@ -669,8 +748,8 @@ namespace ego_planner
       {
         return false;
       }
-      std::copy(best_corridor_x.begin(), best_corridor_x.end(), x_init);
-      regenerateTrajectoryFromDecision(x_init);
+      std::copy(best_corridor_x.begin(), best_corridor_x.end(), x_init.begin());
+      regenerateTrajectoryFromDecision(x_init.data());
       final_cost = best_corridor_cost;
       corridor_rollback_applied = true;
       corridor_rollback_reason = reason;
@@ -702,7 +781,7 @@ namespace ego_planner
       t1 = ros::Time::now();
       int result = lbfgs::lbfgs_optimize(
           variable_num_,
-          x_init,
+          x_init.data(),
           &final_cost,
           PolyTrajOptimizer::costFunctionCallback,
           NULL,
@@ -727,7 +806,7 @@ namespace ego_planner
         bool candidate_invalid = false;
 
         const Eigen::Map<const Eigen::VectorXd> decision_vector(
-            x_init, variable_num_);
+            x_init.data(), variable_num_);
         if (!decision_vector.allFinite())
         {
           if (rollbackCorridorCandidate("nonfinite_decision"))
@@ -747,7 +826,7 @@ namespace ego_planner
           // The final callback evaluation is not guaranteed to coincide with
           // the decision vector returned by L-BFGS. Regenerate explicitly so
           // every safety and corridor check evaluates the exact candidate.
-          regenerateTrajectoryFromDecision(x_init);
+          regenerateTrajectoryFromDecision(x_init.data());
         }
 
         /* double check: fine collision check */
@@ -876,7 +955,9 @@ namespace ego_planner
             }
             // A not-blank return value means collision to obstales
             if (tf_sfc_manager_ &&
-                (!tf_sfc_generated || tf_sfc_parameters_.allow_ego_fallback))
+                (!tf_sfc_generated ||
+                 (tf_sfc_parameters_.allow_ego_fallback &&
+                  !hard_parameterization_active)))
             {
               tf_sfc_manager_->clearCorridors();
               tf_corridors_.clear();
@@ -920,7 +1001,9 @@ namespace ego_planner
           continue;
         }
         if (tf_sfc_manager_ &&
-            (!tf_sfc_generated || tf_sfc_parameters_.allow_ego_fallback))
+            (!tf_sfc_generated ||
+             (tf_sfc_parameters_.allow_ego_fallback &&
+              !hard_parameterization_active)))
         {
           tf_sfc_manager_->clearCorridors();
           tf_corridors_.clear();
@@ -951,6 +1034,25 @@ namespace ego_planner
              (flag_force_return && force_stop_type_ == STOP_FOR_REBOUND && rebound_times <= 20) ||
              corridor_retry_requested);
 
+    if (hard_parameterization_active)
+    {
+      Eigen::MatrixXd final_junctions;
+      const Eigen::Map<const Eigen::VectorXd> final_spatial(
+          x_init.data(), spatial_variable_num_);
+      if (hard_corridor_parameterization_.decode(final_spatial,
+                                                  final_junctions))
+      {
+        max_junction_violation_final_m =
+            hard_corridor_parameterization_.maxJunctionViolation(
+                final_junctions);
+      }
+      else
+      {
+        max_junction_violation_final_m =
+            std::numeric_limits<double>::infinity();
+      }
+    }
+
     if (tf_sfc_experiment_logger_ && tf_sfc_experiment_logger_->enabled())
     {
       tf_sfc::ExperimentRunRecord record;
@@ -980,6 +1082,19 @@ namespace ego_planner
       record.tf_sfc_generated = tf_sfc_generated;
       record.fallback_to_ego = fallback_to_ego;
       record.projection_applied = projection_applied;
+      record.hard_parameterization_enabled =
+          tf_sfc_parameters_.hard_corridor_parameterization;
+      record.hard_parameterization_active = hard_parameterization_active;
+      record.hard_constrained_junction_count =
+          hard_parameterization_active
+              ? hard_corridor_parameterization_.constrainedJunctionCount()
+              : 0;
+      record.hard_total_junction_count = piece_num_ - 1;
+      record.hard_spatial_variable_count = spatial_variable_num_;
+      record.max_junction_violation_initial_m =
+          max_junction_violation_initial_m;
+      record.max_junction_violation_final_m =
+          max_junction_violation_final_m;
       record.lbfgs_result = last_lbfgs_result;
       record.total_planning_ms = (ros::Time::now() - t0).toSec() * 1000.0;
       record.optimizer_ms = optimizer_time_ms;
@@ -2122,11 +2237,29 @@ namespace ego_planner
 
     fill(opt->min_ellip_dist2_.begin(), opt->min_ellip_dist2_.end(), std::numeric_limits<double>::max());
 
-    Eigen::Map<const Eigen::MatrixXd> P(x, 3, opt->piece_num_ - 1);
+    Eigen::MatrixXd P;
+    const Eigen::Map<const Eigen::VectorXd> spatial_variables(
+        x, opt->spatial_variable_num_);
+    if (opt->hard_parameterization_active_)
+    {
+      if (!opt->hard_corridor_parameterization_.decode(spatial_variables, P))
+      {
+        Eigen::Map<Eigen::VectorXd>(grad, n).setZero();
+        return 1.0e100;
+      }
+    }
+    else
+    {
+      P = Eigen::Map<const Eigen::MatrixXd>(x, 3, opt->piece_num_ - 1);
+    }
     // Eigen::VectorXd T(Eigen::VectorXd::Constant(piece_nums, opt->t2T(x[n - 1]))); // same t
-    Eigen::Map<const Eigen::VectorXd> t(x + (3 * (opt->piece_num_ - 1)), opt->piece_num_);
-    Eigen::Map<Eigen::MatrixXd> gradP(grad, 3, opt->piece_num_ - 1);
-    Eigen::Map<Eigen::VectorXd> gradt(grad + (3 * (opt->piece_num_ - 1)), opt->piece_num_);
+    Eigen::Map<const Eigen::VectorXd> t(x + opt->spatial_variable_num_,
+                                       opt->piece_num_);
+    Eigen::MatrixXd gradP(3, opt->piece_num_ - 1);
+    Eigen::Map<Eigen::VectorXd> grad_spatial(grad,
+                                             opt->spatial_variable_num_);
+    Eigen::Map<Eigen::VectorXd> gradt(grad + opt->spatial_variable_num_,
+                                      opt->piece_num_);
     Eigen::VectorXd T(opt->piece_num_);
 
     Eigen::VectorXd gradT(opt->piece_num_);
@@ -2148,10 +2281,30 @@ namespace ego_planner
 
     opt->jerkOpt_.getGrad2TP(gradT, gradP); // Gradient prepagation
 
+    double hard_parameterization_cost = 0.0;
+    if (opt->hard_parameterization_active_)
+    {
+      if (!opt->hard_corridor_parameterization_.backwardGradient(
+              spatial_variables, gradP, grad_spatial))
+      {
+        Eigen::Map<Eigen::VectorXd>(grad, n).setZero();
+        return 1.0e100;
+      }
+      hard_parameterization_cost =
+          opt->hard_corridor_parameterization_.addNormRestriction(
+              spatial_variables, grad_spatial);
+    }
+    else
+    {
+      grad_spatial = Eigen::Map<const Eigen::VectorXd>(
+          gradP.data(), gradP.size());
+    }
+
     opt->VirtualTGradCost(T, t, gradT, gradt, time_cost); // Real time back to virtual time
 
     opt->iter_num_ += 1;
-    return smoo_cost + obs_swarm_feas_qvar_costs.sum() + time_cost;
+    return smoo_cost + obs_swarm_feas_qvar_costs.sum() + time_cost +
+           hard_parameterization_cost;
   }
 
   int PolyTrajOptimizer::earlyExitCallback(void *func_data, const double *x, const double *g, const double fx, const double xnorm, const double gnorm, const double step, int n, int k, int ls)
@@ -2676,6 +2829,8 @@ namespace ego_planner
     nh.param("tf_sfc/allow_ego_fallback", tf_sfc_parameters_.allow_ego_fallback, true);
     nh.param("tf_sfc/enforce_final_corridor",
              tf_sfc_parameters_.enforce_final_corridor, true);
+    nh.param("tf_sfc/hard_corridor_parameterization",
+             tf_sfc_parameters_.hard_corridor_parameterization, true);
     nh.param("tf_sfc/visualization_enabled", tf_sfc_parameters_.visualization_enabled, true);
     nh.param<std::string>("tf_sfc/visualization_frame",
                           tf_sfc_parameters_.visualization_frame, "world");
@@ -2692,6 +2847,8 @@ namespace ego_planner
     nh.param("tf_sfc/min_valid_pieces", tf_sfc_parameters_.min_valid_pieces, 1);
     nh.param("tf_sfc/max_enforcement_passes",
              tf_sfc_parameters_.max_enforcement_passes, 2);
+    nh.param("tf_sfc/hard_max_vertices",
+             tf_sfc_parameters_.hard_max_vertices, 64);
     nh.param("tf_sfc/safety_margin", tf_sfc_parameters_.safety_margin, 0.25);
     nh.param("tf_sfc/min_overlap_radius", tf_sfc_parameters_.min_overlap_radius, 0.15);
     nh.param("tf_sfc/max_inflation_distance", tf_sfc_parameters_.max_inflation_distance, 1.0);
@@ -2703,6 +2860,8 @@ namespace ego_planner
              tf_sfc_parameters_.enforcement_min_improvement, 1.0e-5);
     nh.param("tf_sfc/max_final_violation",
              tf_sfc_parameters_.max_final_violation, 1.0e-3);
+    nh.param("tf_sfc/hard_vertex_tolerance",
+             tf_sfc_parameters_.hard_vertex_tolerance, 1.0e-7);
     nh.param("tf_sfc/penalty_epsilon", tf_sfc_parameters_.penalty_epsilon, 0.02);
     nh.param("tf_sfc/decomp_local_bbox_forward",
              tf_sfc_parameters_.decomp_local_bbox_forward, 0.5);
@@ -2740,6 +2899,8 @@ namespace ego_planner
     tf_sfc_parameters_.min_valid_pieces = std::max(tf_sfc_parameters_.min_valid_pieces, 1);
     tf_sfc_parameters_.max_enforcement_passes =
         std::max(tf_sfc_parameters_.max_enforcement_passes, 0);
+    tf_sfc_parameters_.hard_max_vertices =
+        std::max(tf_sfc_parameters_.hard_max_vertices, 4);
     tf_sfc_parameters_.safety_margin = std::max(tf_sfc_parameters_.safety_margin, 0.0);
     tf_sfc_parameters_.min_overlap_radius = std::max(tf_sfc_parameters_.min_overlap_radius, 0.0);
     tf_sfc_parameters_.max_inflation_distance = std::max(tf_sfc_parameters_.max_inflation_distance, 0.0);
@@ -2751,6 +2912,8 @@ namespace ego_planner
         std::max(tf_sfc_parameters_.enforcement_min_improvement, 0.0);
     tf_sfc_parameters_.max_final_violation =
         std::max(tf_sfc_parameters_.max_final_violation, 0.0);
+    tf_sfc_parameters_.hard_vertex_tolerance =
+        std::max(tf_sfc_parameters_.hard_vertex_tolerance, 1.0e-10);
     tf_sfc_parameters_.penalty_epsilon = std::max(tf_sfc_parameters_.penalty_epsilon, 0.0);
     tf_sfc_parameters_.decomp_local_bbox_forward =
         std::max(tf_sfc_parameters_.decomp_local_bbox_forward, 1.0e-3);
