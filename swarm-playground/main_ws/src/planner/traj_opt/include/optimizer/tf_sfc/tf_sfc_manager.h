@@ -17,6 +17,13 @@ public:
 
   bool generate(const poly_traj::Trajectory &trajectory, CorridorVector &corridors);
 
+  // Build each corridor around a continuously validated piecewise-linear seed
+  // while retaining the initial MINCO piece only as a direction hint.
+  bool generateFromSeedPath(const poly_traj::Trajectory &direction_trajectory,
+                            const PointVector &seed_path,
+                            FailureReason uncovered_failure_reason,
+                            CorridorVector &corridors);
+
   bool generateEllipsoidDecomp(const PointVector &seed_path,
                                int expected_piece_count,
                                FailureReason uncovered_failure_reason,
@@ -52,6 +59,8 @@ private:
                          DirectionSet &directions) const;
 
   PointVector samplePiece(const poly_traj::Piece &piece) const;
+  PointVector sampleSegment(const Eigen::Vector3d &start,
+                            const Eigen::Vector3d &finish) const;
   double overlapRadius(const Corridor &lhs, const Corridor &rhs,
                        const Eigen::Vector3d &shared_point) const;
 
