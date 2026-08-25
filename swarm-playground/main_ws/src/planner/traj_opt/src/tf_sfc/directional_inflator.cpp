@@ -263,6 +263,10 @@ DirectionalInflator::collectCandidateObstacles(
     aabb_max = aabb_max.cwiseMax(world);
   }
 
+  // Enlarge the scan AABB so occupied voxels touching the oriented box are
+  // included as candidates. This padding is only for candidate collection.
+  const double voxel_padding =
+      0.5 * std::sqrt(3.0) * map_resolution;
   aabb_min.array() -= voxel_padding;
   aabb_max.array() += voxel_padding;
   const Eigen::Vector3i begin =
@@ -387,8 +391,6 @@ DirectionalInflator::buildFaceBoundedCandidate(
 
   PointVector cut_normals;
   std::vector<double> cut_offsets;
-  const double voxel_padding =
-      0.5 * std::sqrt(3.0) * map_resolution;
   const auto sampleMargin = [this, &samples](const size_t sample_id) {
     const bool endpoint =
         sample_id == 0 || sample_id + 1 == samples.size();
