@@ -119,6 +119,9 @@ struct Parameters
   int max_enforcement_passes = 2;
   int hard_max_vertices = 64;
   double safety_margin = 0.25;
+  // Required slack for non-junction trajectory samples against obstacle cuts.
+  // Junction samples use min_overlap_radius instead.
+  double interior_sample_margin = 0.0;
   double min_overlap_radius = 0.15;
   double max_inflation_distance = 1.0;
   double inflation_step = 0.10;
@@ -159,6 +162,10 @@ struct CorridorMetrics
   double weighted_width = 0.0;
   double min_sample_slack = -std::numeric_limits<double>::infinity();
   double anchor_clearance_radius = -std::numeric_limits<double>::infinity();
+  double min_obstacle_sample_distance_m =
+      std::numeric_limits<double>::quiet_NaN();
+  int separation_failure_sample_id = -1;
+  bool separation_failure_at_endpoint = false;
   double overlap_radius_to_next = -1.0;
   bool seed_containment_evaluated = false;
   bool seed_contained = false;
