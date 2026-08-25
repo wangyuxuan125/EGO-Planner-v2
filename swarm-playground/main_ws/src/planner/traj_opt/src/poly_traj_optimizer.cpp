@@ -3392,6 +3392,8 @@ namespace ego_planner
     nh.param("tf_sfc/hard_max_vertices",
              tf_sfc_parameters_.hard_max_vertices, 64);
     nh.param("tf_sfc/safety_margin", tf_sfc_parameters_.safety_margin, 0.25);
+    nh.param("tf_sfc/interior_sample_margin",
+             tf_sfc_parameters_.interior_sample_margin, 0.0);
     nh.param("tf_sfc/min_overlap_radius", tf_sfc_parameters_.min_overlap_radius, 0.15);
     nh.param("tf_sfc/max_inflation_distance", tf_sfc_parameters_.max_inflation_distance, 1.0);
     nh.param("tf_sfc/inflation_step", tf_sfc_parameters_.inflation_step, 0.10);
@@ -3450,6 +3452,8 @@ namespace ego_planner
     tf_sfc_parameters_.hard_max_vertices =
         std::max(tf_sfc_parameters_.hard_max_vertices, 4);
     tf_sfc_parameters_.safety_margin = std::max(tf_sfc_parameters_.safety_margin, 0.0);
+    tf_sfc_parameters_.interior_sample_margin =
+        std::max(tf_sfc_parameters_.interior_sample_margin, 0.0);
     tf_sfc_parameters_.min_overlap_radius = std::max(tf_sfc_parameters_.min_overlap_radius, 0.0);
     tf_sfc_parameters_.max_inflation_distance = std::max(tf_sfc_parameters_.max_inflation_distance, 0.0);
     tf_sfc_parameters_.inflation_step = std::max(tf_sfc_parameters_.inflation_step, 1.0e-3);
