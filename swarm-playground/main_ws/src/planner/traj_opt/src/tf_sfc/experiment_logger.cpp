@@ -59,7 +59,8 @@ const char *kRunHeader =
 const char *kCorridorHeader =
     "schema_version,run_id,timestamp_s,experiment_tag,drone_id,piece_id,"
     "requested_method,method,"
-    "face_count,generation_time_ms,weighted_width,min_sample_slack,"
+    "face_count,obstacle_face_count,obstacle_point_count,face_budget_saturated,"
+    "generation_time_ms,weighted_width,min_sample_slack,anchor_clearance_radius,"
     "overlap_radius_to_next,seed_containment_evaluated,seed_contained,"
     "seed_containment_max_violation_m,valid,direction_fallback,failure_reason";
 }
@@ -141,7 +142,7 @@ bool ExperimentLogger::ensureDirectory() const
 
 bool ExperimentLogger::appendRun(const ExperimentRunRecord &record) const
 {
-  const std::string path = directory_ + "/ego_runs_v9_drone_" +
+  const std::string path = directory_ + "/ego_runs_v10_drone_" +
                            std::to_string(record.drone_id) + ".csv";
   const bool header = fileNeedsHeader(path);
   std::ofstream output(path, std::ios::out | std::ios::app);
@@ -154,7 +155,7 @@ bool ExperimentLogger::appendRun(const ExperimentRunRecord &record) const
     output << kRunHeader << '\n';
   }
   output << std::setprecision(17)
-         << 9 << ',' << csv(record.run_id) << ','
+         << 10 << ',' << csv(record.run_id) << ','
          << csv(record.planning_event_id) << ',' << record.timestamp_s << ','
          << csv(record.experiment_tag) << ',' << record.drone_id << ','
          << record.goal_id << ',' << record.replan_id << ','
@@ -234,7 +235,7 @@ bool ExperimentLogger::appendCorridors(const ExperimentRunRecord &record,
   {
     return true;
   }
-  const std::string path = directory_ + "/ego_corridors_v9_drone_" +
+  const std::string path = directory_ + "/ego_corridors_v10_drone_" +
                            std::to_string(record.drone_id) + ".csv";
   const bool header = fileNeedsHeader(path);
   std::ofstream output(path, std::ios::out | std::ios::app);
@@ -250,12 +251,17 @@ bool ExperimentLogger::appendCorridors(const ExperimentRunRecord &record,
   for (const Corridor &corridor : corridors)
   {
     const CorridorMetrics &metrics = corridor.metrics;
-    output << 9 << ',' << csv(record.run_id) << ',' << record.timestamp_s << ','
+    output << 10 << ',' << csv(record.run_id) << ',' << record.timestamp_s << ','
            << csv(record.experiment_tag) << ',' << record.drone_id << ','
            << metrics.piece_id << ',' << csv(record.requested_method) << ','
            << csv(record.method) << ',' << metrics.face_count << ','
+           << metrics.obstacle_face_count << ','
+           << metrics.obstacle_point_count << ','
+           << metrics.face_budget_saturated << ','
            << metrics.generation_time_ms << ',' << metrics.weighted_width << ','
-           << metrics.min_sample_slack << ',' << metrics.overlap_radius_to_next << ','
+           << metrics.min_sample_slack << ','
+           << metrics.anchor_clearance_radius << ','
+           << metrics.overlap_radius_to_next << ','
            << metrics.seed_containment_evaluated << ','
            << metrics.seed_contained << ','
            << metrics.seed_containment_max_violation_m << ','
