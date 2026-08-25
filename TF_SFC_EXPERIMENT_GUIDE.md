@@ -185,6 +185,17 @@ v12 CSV 若同时满足 `separation_failure_at_endpoint=1`、`separation_failure
 
 重新测试时使用新的目录或标签 `proposed_pca_f12_v12_overlap_refined`，不要把修正前后的追加行放在同一实验组。若结果变为 `overlap_too_small`，表示该 raw A* 局部路径上确实没有满足当前固定半径的可达接头；此时应进入 overlap refiner/clearance-aware path ablation，而不是把失败计为面受限生成器或优化器失败。
 
+### v12.2：局部 overlap refiner
+
+v12.1 的 `overlap_too_small` 若伴随 `seed_path_point_count=0`，表示 raw A* 栅格点门槛在走廊生成前拒绝了 seed。v12.2 改为先构造最终保留的 fixed-piece seed，再只移动内部接头；每个候选必须同时满足膨胀体素 AABB 净空和左右两条 seed 边的连续无碰撞。
+
+新增参数：
+
+- `tf_sfc_junction_refine_radius:=0.50`：接头局部搜索半径；
+- `tf_sfc_junction_refine_step:=0.05`：候选搜索步长。
+
+正式比较时两项必须在 Liu、OBB 和 TF-SFC 间保持相同。成功移动时 `seed_path_strategy` 带 `_overlap_local_refined`；搜索空间内无可行接头时带 `_overlap_local_refine_failed`。
+
 ### 自定义日志目录
 
 ```bash
