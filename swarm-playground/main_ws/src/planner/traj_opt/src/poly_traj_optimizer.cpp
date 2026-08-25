@@ -1036,8 +1036,9 @@ namespace ego_planner
           }
           jerkOpt_.generate(guidedInnerPts, initT);
           const ros::WallTime inflation_started = ros::WallTime::now();
-          corridor_ok =
-              tf_sfc_manager_->generate(jerkOpt_.getTraj(), tf_corridors_);
+          corridor_ok = tf_sfc_manager_->generateFromSeedPath(
+              jerkOpt_.getTraj(), seed_path, uncovered_failure_reason,
+              tf_corridors_);
           tf_sfc_inflation_ms +=
               (ros::WallTime::now() - inflation_started).toSec() * 1000.0;
 
@@ -1133,8 +1134,9 @@ namespace ego_planner
               tf_corridors_.clear();
               const ros::WallTime retry_inflation_started =
                   ros::WallTime::now();
-              corridor_ok = tf_sfc_manager_->generate(
-                  jerkOpt_.getTraj(), tf_corridors_);
+              corridor_ok = tf_sfc_manager_->generateFromSeedPath(
+                  jerkOpt_.getTraj(), fallback_seed_path,
+                  fallback_uncovered_failure_reason, tf_corridors_);
               tf_sfc_inflation_ms +=
                   (ros::WallTime::now() - retry_inflation_started)
                       .toSec() *
