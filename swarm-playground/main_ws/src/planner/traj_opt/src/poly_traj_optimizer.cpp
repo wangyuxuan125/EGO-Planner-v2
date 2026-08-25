@@ -820,7 +820,8 @@ namespace ego_planner
           }
         }
       }
-      else if (requested_corridor_method == "obb")
+      else if (requested_corridor_method == "obb" ||
+               requested_corridor_method == "tf_sfc")
       {
         jerkOpt_.generate(guidedInnerPts, initT);
         const ros::WallTime inflation_started = ros::WallTime::now();
@@ -3227,6 +3228,7 @@ namespace ego_planner
     nh.param<std::string>("tf_sfc/corridor_method", tf_sfc_parameters_.corridor_method,
                           "obb");
     nh.param("tf_sfc/max_faces", tf_sfc_parameters_.max_faces, 12);
+    nh.param("tf_sfc/max_obs_faces", tf_sfc_parameters_.max_obs_faces, 6);
     nh.param("tf_sfc/samples_per_piece", tf_sfc_parameters_.samples_per_piece, 8);
     nh.param("tf_sfc/projection_passes", tf_sfc_parameters_.projection_passes, 4);
     nh.param("tf_sfc/min_valid_pieces", tf_sfc_parameters_.min_valid_pieces, 1);
@@ -3282,6 +3284,9 @@ namespace ego_planner
       ROS_WARN("tf_sfc/max_faces must be at least 6; disabling TF-SFC.");
       tf_sfc_parameters_.enabled = false;
     }
+    tf_sfc_parameters_.max_obs_faces =
+        std::max(0, std::min(tf_sfc_parameters_.max_obs_faces,
+                             tf_sfc_parameters_.max_faces - 6));
     tf_sfc_parameters_.samples_per_piece = std::max(tf_sfc_parameters_.samples_per_piece, 2);
     tf_sfc_parameters_.projection_passes = std::max(tf_sfc_parameters_.projection_passes, 1);
     tf_sfc_parameters_.min_valid_pieces = std::max(tf_sfc_parameters_.min_valid_pieces, 1);
@@ -3325,6 +3330,7 @@ namespace ego_planner
                "continuation.");
     }
     if (tf_sfc_parameters_.corridor_method != "obb" &&
+        tf_sfc_parameters_.corridor_method != "tf_sfc" &&
         tf_sfc_parameters_.corridor_method != "ellipsoid_decomp")
     {
       ROS_ERROR("Invalid tf_sfc/corridor_method='%s'; corridor generation will be rejected.",
