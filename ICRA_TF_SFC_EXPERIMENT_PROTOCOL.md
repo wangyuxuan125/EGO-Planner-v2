@@ -177,3 +177,12 @@ The v12 diagnostic run contained 820/820 identical failures at piece 0, sample 8
 The seed post-processor now checks point-to-inflated-voxel-AABB clearance while simplifying the unchanged raw A* path. A visible bend that cannot support `min_overlap_radius` is backed off to an earlier raw-path point that can. This changes MINCO/SFC junction placement, not A* graph search, costs, or the raw A* result. The same post-processing is used for Liu and proposed methods so the corridor-front-end comparison retains a shared seed policy. When refinement is used, `seed_path_strategy` contains the suffix `_overlap_clearance_refined`.
 
 If no reachable internal A* point can support the requested radius, generation fails explicitly with `overlap_too_small`; the implementation does not silently lower the experiment parameter.
+
+
+## v12.2 local overlap refiner
+
+The first v12.1 run failed before corridor construction: all 940 attempts had `seed_path_point_count=0`, `seed_path_edge_valid=0`, one empty failure row, and `overlap_too_small`. The strategy remained `edge_validated_astar`, proving that requiring raw A* voxel centers themselves to contain the overlap ball was an over-early gate rather than an adjacent-polytope measurement.
+
+v12.2 restores ordinary collision-free line-of-sight simplification, constructs the retained fixed-piece seed, and then locally relocates only its internal junctions. Candidates are searched by increasing displacement within `junction_refine_radius` at `junction_refine_step`; an accepted candidate must satisfy point-to-inflated-voxel-AABB clearance and keep both neighboring seed segments continuously collision-free. Raw A* search remains unchanged. Successful relocation appends `_overlap_local_refined` to `seed_path_strategy`; an exhausted search appends `_overlap_local_refine_failed` and returns `overlap_too_small`.
+
+The default local search radius/step are `0.50 m / 0.05 m`. These parameters must be fixed across corridor methods and included in the experiment manifest. The policy is applied to the final retained seed prefix, including subdivision junctions but excluding the start and terminal prefix endpoint.
