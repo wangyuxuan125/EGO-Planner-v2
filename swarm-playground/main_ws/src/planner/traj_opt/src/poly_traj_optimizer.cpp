@@ -918,7 +918,7 @@ namespace ego_planner
               tf_sfc_parameters_.hard_corridor_parameterization;
           record.hard_parameterization_active = false;
           record.hard_total_junction_count = piece_num_ - 1;
-          record.direction_mode = requested_corridor_method == "obb"
+          record.direction_mode = (requested_corridor_method == "obb" || requested_corridor_method == "tf_sfc")
                                       ? static_cast<int>(tf_sfc_parameters_.direction_mode)
                                       : -1;
           record.total_planning_ms = (ros::Time::now() - t0).toSec() * 1000.0;
@@ -1445,7 +1445,7 @@ namespace ego_planner
           seed_path_build_info.seed_validation_failure_point_id;
       populate_seed_record(record);
       record.tf_sfc_enabled = tf_sfc_parameters_.enabled;
-      record.direction_mode = requested_corridor_method == "obb"
+      record.direction_mode = (requested_corridor_method == "obb" || requested_corridor_method == "tf_sfc")
                                   ? static_cast<int>(tf_sfc_parameters_.direction_mode)
                                   : -1;
       record.success = flag_success;
