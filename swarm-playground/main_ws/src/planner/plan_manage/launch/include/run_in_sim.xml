@@ -50,6 +50,8 @@
     <arg name="tf_sfc_safety_margin" default="0.10"/>
     <arg name="tf_sfc_min_overlap_radius" default="0.08"/>
     <arg name="tf_sfc_interior_sample_margin" default="0.0"/>
+    <arg name="tf_sfc_junction_refine_radius" default="0.50"/>
+    <arg name="tf_sfc_junction_refine_step" default="0.05"/>
     <arg name="tf_sfc_direction_mode" default="1"/>
     <arg name="tf_sfc_log_enabled" default="true"/>
     <arg name="tf_sfc_log_directory" default="$(env HOME)/tf_sfc_results/ego"/>
@@ -113,6 +115,8 @@
         <arg name="tf_sfc_safety_margin" value="$(arg tf_sfc_safety_margin)"/>
         <arg name="tf_sfc_min_overlap_radius" value="$(arg tf_sfc_min_overlap_radius)"/>
         <arg name="tf_sfc_interior_sample_margin" value="$(arg tf_sfc_interior_sample_margin)"/>
+        <arg name="tf_sfc_junction_refine_radius" value="$(arg tf_sfc_junction_refine_radius)"/>
+        <arg name="tf_sfc_junction_refine_step" value="$(arg tf_sfc_junction_refine_step)"/>
         <arg name="tf_sfc_direction_mode" value="$(arg tf_sfc_direction_mode)"/>
         <arg name="tf_sfc_log_enabled" value="$(arg tf_sfc_log_enabled)"/>
         <arg name="tf_sfc_log_directory" value="$(arg tf_sfc_log_directory)"/>
