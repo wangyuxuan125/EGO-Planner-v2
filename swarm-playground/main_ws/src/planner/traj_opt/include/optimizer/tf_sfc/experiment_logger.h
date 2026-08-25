@@ -14,6 +14,7 @@ namespace tf_sfc
 struct ExperimentRunRecord
 {
   std::string run_id;
+  std::string planning_event_id;
   std::string experiment_tag;
   std::string status;
   std::string requested_method = "obb";
@@ -22,6 +23,7 @@ struct ExperimentRunRecord
   int drone_id = -1;
   std::uint64_t goal_id = 0;
   std::uint64_t replan_id = 0;
+  int retry_index = 0;
   int attempt_id = 0;
   bool touch_goal = false;
   std::string seed_path_strategy = "not_applicable";
@@ -30,6 +32,16 @@ struct ExperimentRunRecord
   bool velocity_seed_fallback_used = false;
   std::string velocity_seed_fallback_reason = "none";
   int seed_validation_failure_point_id = -1;
+  bool astar_search_attempted = false;
+  bool astar_search_success = false;
+  int astar_search_call_count = 0;
+  double astar_search_ms = 0.0;
+  int raw_seed_path_point_count = 0;
+  double raw_seed_path_length_m = 0.0;
+  int seed_path_point_count = 0;
+  double seed_path_length_m = 0.0;
+  bool seed_path_edge_valid = false;
+  double seed_path_coverage_ratio = 0.0;
   bool tf_sfc_enabled = false;
   int direction_mode = 1;
   bool success = false;
@@ -51,6 +63,8 @@ struct ExperimentRunRecord
   double total_planning_ms = 0.0;
   double optimizer_ms = 0.0;
   double corridor_generation_ms = 0.0;
+  double seed_path_build_ms = 0.0;
+  double corridor_inflation_ms = 0.0;
   int lbfgs_iterations = 0;
   int restart_count = 0;
   int rebound_count = 0;
@@ -63,6 +77,9 @@ struct ExperimentRunRecord
   double mean_weighted_width = 0.0;
   double min_sample_slack = 0.0;
   double min_overlap_radius = 0.0;
+  int seed_containment_evaluated_count = 0;
+  int seed_contained_corridor_count = 0;
+  double max_seed_containment_violation_m = 0.0;
   int direction_fallback_count = 0;
   int corridor_constrained_piece_count = 0;
   double corridor_penalty_cost_initial = 0.0;

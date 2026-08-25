@@ -105,7 +105,8 @@ namespace ego_planner
       for (int i = trajs.size() - 1; i >= 0; i--)
       {
         ploy_traj_opt_->setExperimentContext(experiment_goal_id_,
-                                             experiment_replan_id, i);
+                                             experiment_replan_id,
+                                             continous_failures_count_, i);
         ploy_traj_opt_->setConstraintPoints(trajs[i]);
         ploy_traj_opt_->setUseMultitopologyTrajs(true);
         if (ploy_traj_opt_->optimizeTrajectory(headState, tailState,
@@ -153,7 +154,8 @@ namespace ego_planner
       tailState << initTraj.getJuncPos(PN), initTraj.getJuncVel(PN), initTraj.getJuncAcc(PN);
       double final_cost;
       ploy_traj_opt_->setExperimentContext(experiment_goal_id_,
-                                           experiment_replan_id, 0);
+                                           experiment_replan_id,
+                                           continous_failures_count_, 0);
       flag_success = ploy_traj_opt_->optimizeTrajectory(headState, tailState,
                                                         innerPts, initTraj.getDurations(), final_cost);
       best_MJO = ploy_traj_opt_->getMinJerkOpt();

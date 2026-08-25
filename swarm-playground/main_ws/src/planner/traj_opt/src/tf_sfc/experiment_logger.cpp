@@ -21,11 +21,15 @@ namespace tf_sfc
 namespace
 {
 const char *kRunHeader =
-    "schema_version,run_id,timestamp_s,experiment_tag,drone_id,goal_id,replan_id,"
-    "attempt_id,touch_goal,seed_path_strategy,initial_velocity_seed_attempted,"
+    "schema_version,run_id,planning_event_id,timestamp_s,experiment_tag,"
+    "drone_id,goal_id,replan_id,retry_index,attempt_id,touch_goal,"
+    "seed_path_strategy,initial_velocity_seed_attempted,"
     "initial_velocity_seed_used,velocity_seed_fallback_used,"
-    "velocity_seed_fallback_reason,seed_validation_failure_point_id,status,"
-    "requested_method,method,"
+    "velocity_seed_fallback_reason,seed_validation_failure_point_id,"
+    "astar_search_attempted,astar_search_success,astar_search_call_count,"
+    "astar_search_ms,raw_seed_path_point_count,raw_seed_path_length_m,"
+    "seed_path_point_count,seed_path_length_m,seed_path_edge_valid,"
+    "seed_path_coverage_ratio,status,requested_method,method,"
     "tf_sfc_enabled,direction_mode,success,collision_free,tf_sfc_generated,"
     "final_obstacle_collision,final_swarm_clearance_failure,terminal_failure_reason,"
     "fallback_to_ego,projection_applied,hard_parameterization_enabled,"
@@ -33,11 +37,14 @@ const char *kRunHeader =
     "hard_total_junction_count,hard_spatial_variable_count,"
     "max_junction_violation_initial_m,max_junction_violation_final_m,"
     "lbfgs_result,total_planning_ms,"
-    "optimizer_ms,corridor_generation_ms,lbfgs_iterations,restart_count,"
+    "optimizer_ms,corridor_generation_ms,seed_path_build_ms,"
+    "corridor_inflation_ms,lbfgs_iterations,restart_count,"
     "rebound_count,piece_count,corridor_count,failed_piece_count,first_failure_reason,"
     "total_faces,mean_faces,"
     "mean_weighted_width,min_sample_slack,min_overlap_radius,"
-    "direction_fallback_count,corridor_constrained_piece_count,"
+    "seed_containment_evaluated_count,seed_contained_corridor_count,"
+    "max_seed_containment_violation_m,direction_fallback_count,"
+    "corridor_constrained_piece_count,"
     "corridor_penalty_cost_initial,corridor_penalty_cost_final,"
     "max_corridor_violation_initial_m,max_corridor_violation_final_m,"
     "final_corridor_enforcement_enabled,max_final_violation_allowed_m,"
@@ -53,7 +60,8 @@ const char *kCorridorHeader =
     "schema_version,run_id,timestamp_s,experiment_tag,drone_id,piece_id,"
     "requested_method,method,"
     "face_count,generation_time_ms,weighted_width,min_sample_slack,"
-    "overlap_radius_to_next,valid,direction_fallback,failure_reason";
+    "overlap_radius_to_next,seed_containment_evaluated,seed_contained,"
+    "seed_containment_max_violation_m,valid,direction_fallback,failure_reason";
 }
 
 ExperimentLogger::ExperimentLogger(const bool enabled,
@@ -133,7 +141,7 @@ bool ExperimentLogger::ensureDirectory() const
 
 bool ExperimentLogger::appendRun(const ExperimentRunRecord &record) const
 {
-  const std::string path = directory_ + "/ego_runs_v8_drone_" +
+  const std::string path = directory_ + "/ego_runs_v9_drone_" +
                            std::to_string(record.drone_id) + ".csv";
   const bool header = fileNeedsHeader(path);
   std::ofstream output(path, std::ios::out | std::ios::app);
@@ -146,16 +154,28 @@ bool ExperimentLogger::appendRun(const ExperimentRunRecord &record) const
     output << kRunHeader << '\n';
   }
   output << std::setprecision(17)
-         << 8 << ',' << csv(record.run_id) << ',' << record.timestamp_s << ','
+         << 9 << ',' << csv(record.run_id) << ','
+         << csv(record.planning_event_id) << ',' << record.timestamp_s << ','
          << csv(record.experiment_tag) << ',' << record.drone_id << ','
          << record.goal_id << ',' << record.replan_id << ','
-         << record.attempt_id << ',' << record.touch_goal << ','
+         << record.retry_index << ',' << record.attempt_id << ','
+         << record.touch_goal << ','
          << csv(record.seed_path_strategy) << ','
          << record.initial_velocity_seed_attempted << ','
          << record.initial_velocity_seed_used << ','
          << record.velocity_seed_fallback_used << ','
          << csv(record.velocity_seed_fallback_reason) << ','
          << record.seed_validation_failure_point_id << ','
+         << record.astar_search_attempted << ','
+         << record.astar_search_success << ','
+         << record.astar_search_call_count << ','
+         << record.astar_search_ms << ','
+         << record.raw_seed_path_point_count << ','
+         << record.raw_seed_path_length_m << ','
+         << record.seed_path_point_count << ','
+         << record.seed_path_length_m << ','
+         << record.seed_path_edge_valid << ','
+         << record.seed_path_coverage_ratio << ','
          << csv(record.status) << ',' << csv(record.requested_method) << ','
          << csv(record.method) << ',' << record.tf_sfc_enabled << ','
          << record.direction_mode << ',' << record.success << ','
@@ -173,12 +193,17 @@ bool ExperimentLogger::appendRun(const ExperimentRunRecord &record) const
          << record.max_junction_violation_final_m << ','
          << record.lbfgs_result << ',' << record.total_planning_ms << ','
          << record.optimizer_ms << ',' << record.corridor_generation_ms << ','
+         << record.seed_path_build_ms << ','
+         << record.corridor_inflation_ms << ','
          << record.lbfgs_iterations << ',' << record.restart_count << ','
          << record.rebound_count << ',' << record.piece_count << ','
          << record.corridor_count << ',' << record.failed_piece_count << ','
          << csv(record.first_failure_reason) << ',' << record.total_faces << ','
          << record.mean_faces << ',' << record.mean_weighted_width << ','
          << record.min_sample_slack << ',' << record.min_overlap_radius << ','
+         << record.seed_containment_evaluated_count << ','
+         << record.seed_contained_corridor_count << ','
+         << record.max_seed_containment_violation_m << ','
          << record.direction_fallback_count << ','
          << record.corridor_constrained_piece_count << ','
          << record.corridor_penalty_cost_initial << ','
@@ -209,7 +234,7 @@ bool ExperimentLogger::appendCorridors(const ExperimentRunRecord &record,
   {
     return true;
   }
-  const std::string path = directory_ + "/ego_corridors_v8_drone_" +
+  const std::string path = directory_ + "/ego_corridors_v9_drone_" +
                            std::to_string(record.drone_id) + ".csv";
   const bool header = fileNeedsHeader(path);
   std::ofstream output(path, std::ios::out | std::ios::app);
@@ -225,12 +250,15 @@ bool ExperimentLogger::appendCorridors(const ExperimentRunRecord &record,
   for (const Corridor &corridor : corridors)
   {
     const CorridorMetrics &metrics = corridor.metrics;
-    output << 8 << ',' << csv(record.run_id) << ',' << record.timestamp_s << ','
+    output << 9 << ',' << csv(record.run_id) << ',' << record.timestamp_s << ','
            << csv(record.experiment_tag) << ',' << record.drone_id << ','
            << metrics.piece_id << ',' << csv(record.requested_method) << ','
            << csv(record.method) << ',' << metrics.face_count << ','
            << metrics.generation_time_ms << ',' << metrics.weighted_width << ','
            << metrics.min_sample_slack << ',' << metrics.overlap_radius_to_next << ','
+           << metrics.seed_containment_evaluated << ','
+           << metrics.seed_contained << ','
+           << metrics.seed_containment_max_violation_m << ','
            << metrics.valid << ',' << metrics.direction_fallback << ','
            << failureReasonName(metrics.failure_reason) << '\n';
   }

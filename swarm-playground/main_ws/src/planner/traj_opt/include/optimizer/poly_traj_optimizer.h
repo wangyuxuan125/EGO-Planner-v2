@@ -94,6 +94,7 @@ namespace ego_planner
     bool touch_goal_;
     std::uint64_t experiment_goal_id_{0};
     std::uint64_t experiment_replan_id_{0};
+    int experiment_retry_index_{0};
     int experiment_attempt_id_{0};
     struct MultitopologyData_t
     {
@@ -141,6 +142,7 @@ namespace ego_planner
     void setIfTouchGoal(const bool touch_goal);
     void setExperimentContext(std::uint64_t goal_id,
                               std::uint64_t replan_id,
+                              int retry_index,
                               int attempt_id);
     void setConstraintPoints(ConstraintPoints cps);
     void setUseMultitopologyTrajs(bool use_multitopology_trajs);

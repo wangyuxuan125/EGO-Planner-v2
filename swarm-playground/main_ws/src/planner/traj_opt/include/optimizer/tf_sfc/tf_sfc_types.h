@@ -150,6 +150,10 @@ struct CorridorMetrics
   double weighted_width = 0.0;
   double min_sample_slack = -std::numeric_limits<double>::infinity();
   double overlap_radius_to_next = -1.0;
+  bool seed_containment_evaluated = false;
+  bool seed_contained = false;
+  double seed_containment_max_violation_m =
+      std::numeric_limits<double>::quiet_NaN();
   bool valid = false;
   bool direction_fallback = false;
   FailureReason failure_reason = FailureReason::NONE;

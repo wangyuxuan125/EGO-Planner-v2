@@ -16,6 +16,33 @@ namespace ego_planner
 namespace tf_sfc
 {
 
+namespace
+{
+double maxNormalizedHalfspaceViolation(const HPoly &hpoly,
+                                       const Eigen::Vector3d &point)
+{
+  if (hpoly.rows() <= 0 || !hpoly.allFinite() || !point.allFinite())
+  {
+    return std::numeric_limits<double>::infinity();
+  }
+  double max_violation = -std::numeric_limits<double>::infinity();
+  for (int face_id = 0; face_id < hpoly.rows(); ++face_id)
+  {
+    const Eigen::Vector3d normal =
+        hpoly.row(face_id).head<3>().transpose();
+    const double normal_norm = normal.norm();
+    if (!std::isfinite(normal_norm) || normal_norm <= 1.0e-12)
+    {
+      return std::numeric_limits<double>::infinity();
+    }
+    max_violation = std::max(
+        max_violation,
+        (normal.dot(point) - hpoly(face_id, 3)) / normal_norm);
+  }
+  return max_violation;
+}
+} // namespace
+
 TfSfcManager::TfSfcManager(const GridMap::Ptr &grid_map, const Parameters &parameters)
     : grid_map_(grid_map), parameters_(parameters), inflator_(parameters)
 {
@@ -392,9 +419,16 @@ bool TfSfcManager::generateEllipsoidDecomp(const PointVector &seed_path,
     corridor.hpoly.row(row++) << 0.0, 0.0, -1.0, -map_low.z();
 
     corridor.anchor = 0.5 * (path[piece_id] + path[piece_id + 1]);
+    corridor.metrics.seed_containment_evaluated = true;
+    corridor.metrics.seed_containment_max_violation_m = std::max(
+        maxNormalizedHalfspaceViolation(corridor.hpoly, path[piece_id]),
+        maxNormalizedHalfspaceViolation(corridor.hpoly, path[piece_id + 1]));
+    corridor.metrics.seed_contained =
+        corridor.metrics.seed_containment_max_violation_m <= 1.0e-6;
+    // A convex polytope containing both endpoints contains the complete line
+    // seed. This is the manageability check used by the corridor benchmark.
     const bool valid = corridor.hpoly.allFinite() &&
-                       DirectionalInflator::contains(corridor.hpoly, path[piece_id], 1.0e-6) &&
-                       DirectionalInflator::contains(corridor.hpoly, path[piece_id + 1], 1.0e-6);
+                       corridor.metrics.seed_contained;
     if (!valid)
     {
       corridor.metrics.failure_reason = FailureReason::DECOMP_FAILURE;

@@ -98,6 +98,34 @@ struct SeedPathBuildInfo
   bool velocity_seed_fallback_used = false;
   std::string velocity_seed_fallback_reason = "none";
   int seed_validation_failure_point_id = -1;
+  bool astar_search_attempted = false;
+  bool astar_search_success = false;
+  int astar_search_call_count = 0;
+  double astar_search_ms = 0.0;
+  int raw_seed_path_point_count = 0;
+  double raw_seed_path_length_m = 0.0;
+  int seed_path_point_count = 0;
+  double seed_path_length_m = 0.0;
+  bool seed_path_edge_valid = false;
+  double seed_path_coverage_ratio = 0.0;
+  double seed_path_build_ms = 0.0;
+};
+
+struct SeedPathBuildTimer
+{
+  explicit SeedPathBuildTimer(SeedPathBuildInfo &build_info)
+      : build_info_(build_info), started_(ros::WallTime::now())
+  {
+  }
+
+  ~SeedPathBuildTimer()
+  {
+    build_info_.seed_path_build_ms =
+        (ros::WallTime::now() - started_).toSec() * 1000.0;
+  }
+
+  SeedPathBuildInfo &build_info_;
+  ros::WallTime started_;
 };
 
 bool buildFixedPieceSeedPath(const GridMap::Ptr &grid_map,
@@ -119,6 +147,7 @@ bool buildFixedPieceSeedPath(const GridMap::Ptr &grid_map,
 {
   seed_path.clear();
   build_info = SeedPathBuildInfo();
+  SeedPathBuildTimer build_timer(build_info);
   covered_piece_num = 0;
   uncovered_failure_reason = ego_planner::tf_sfc::FailureReason::NONE;
   failure_reason = ego_planner::tf_sfc::FailureReason::INVALID_INPUT;
@@ -195,6 +224,7 @@ bool buildFixedPieceSeedPath(const GridMap::Ptr &grid_map,
       return false;
     }
   }
+  build_info.seed_path_coverage_ratio = coverage_ratio;
 
   const double resolution = grid_map->getResolution();
   const double seed_distance = (seed_finish - start).norm();
@@ -287,8 +317,18 @@ bool buildFixedPieceSeedPath(const GridMap::Ptr &grid_map,
       }
     }
 
-    ASTAR_RET search_result =
-        a_star->AstarSearch(resolution, search_start, seed_finish, true);
+    const auto run_astar = [&](const Eigen::Vector3d &query_start,
+                               const Eigen::Vector3d &query_finish) {
+      build_info.astar_search_attempted = true;
+      ++build_info.astar_search_call_count;
+      const ros::WallTime search_started = ros::WallTime::now();
+      const ASTAR_RET result =
+          a_star->AstarSearch(resolution, query_start, query_finish, true);
+      build_info.astar_search_ms +=
+          (ros::WallTime::now() - search_started).toSec() * 1000.0;
+      return result;
+    };
+    ASTAR_RET search_result = run_astar(search_start, seed_finish);
     if (search_result != ASTAR_RET::SUCCESS &&
         build_info.initial_velocity_seed_used)
     {
@@ -299,8 +339,7 @@ bool buildFixedPieceSeedPath(const GridMap::Ptr &grid_map,
       build_info.velocity_seed_fallback_reason = "velocity_astar_failure";
       build_info.strategy = "astar_velocity_search_fallback";
       search_start = start;
-      search_result =
-          a_star->AstarSearch(resolution, search_start, seed_finish, true);
+      search_result = run_astar(search_start, seed_finish);
     }
     if (search_result != ASTAR_RET::SUCCESS)
     {
@@ -314,6 +353,7 @@ bool buildFixedPieceSeedPath(const GridMap::Ptr &grid_map,
       failure_reason = ego_planner::tf_sfc::FailureReason::SEED_ASTAR_FAILURE;
       return false;
     }
+    build_info.astar_search_success = true;
     raw_path.front() = search_start;
     raw_path.back() = seed_finish;
     if (build_info.initial_velocity_seed_used)
@@ -324,6 +364,13 @@ bool buildFixedPieceSeedPath(const GridMap::Ptr &grid_map,
     {
       raw_path.front() = start;
     }
+  }
+
+  build_info.raw_seed_path_point_count = static_cast<int>(raw_path.size());
+  for (std::size_t point_id = 1; point_id < raw_path.size(); ++point_id)
+  {
+    build_info.raw_seed_path_length_m +=
+        (raw_path[point_id] - raw_path[point_id - 1]).norm();
   }
 
   ego_planner::tf_sfc::PointVector simplified;
@@ -431,9 +478,36 @@ bool buildFixedPieceSeedPath(const GridMap::Ptr &grid_map,
               static_cast<double>(divisions[segment_id]));
     }
   }
-  const bool valid = static_cast<int>(seed_path.size()) == covered_piece_num + 1;
-  failure_reason = valid ? ego_planner::tf_sfc::FailureReason::NONE
-                         : ego_planner::tf_sfc::FailureReason::SEED_PATH_FAILURE;
+  const bool point_count_valid =
+      static_cast<int>(seed_path.size()) == covered_piece_num + 1;
+  bool seed_edges_valid = point_count_valid;
+  ego_planner::tf_sfc::FailureReason edge_failure_reason =
+      ego_planner::tf_sfc::FailureReason::NONE;
+  build_info.seed_path_point_count = static_cast<int>(seed_path.size());
+  for (std::size_t point_id = 1; point_id < seed_path.size(); ++point_id)
+  {
+    build_info.seed_path_length_m +=
+        (seed_path[point_id] - seed_path[point_id - 1]).norm();
+    const SegmentState edge_state =
+        segmentState(grid_map, seed_path[point_id - 1], seed_path[point_id]);
+    if (edge_state != SegmentState::FREE)
+    {
+      seed_edges_valid = false;
+      if (edge_failure_reason ==
+          ego_planner::tf_sfc::FailureReason::NONE)
+      {
+        edge_failure_reason = segmentFailureReason(edge_state);
+      }
+    }
+  }
+  build_info.seed_path_edge_valid = seed_edges_valid;
+  const bool valid = point_count_valid && seed_edges_valid;
+  failure_reason =
+      valid
+          ? ego_planner::tf_sfc::FailureReason::NONE
+          : (edge_failure_reason != ego_planner::tf_sfc::FailureReason::NONE
+                 ? edge_failure_reason
+                 : ego_planner::tf_sfc::FailureReason::SEED_PATH_FAILURE);
   return valid;
 }
 }
@@ -472,6 +546,7 @@ namespace ego_planner
                                                       : "ego";
     double optimizer_time_ms = 0.0;
     double tf_sfc_generation_ms = 0.0;
+    double tf_sfc_inflation_ms = 0.0;
     int total_lbfgs_iterations = 0;
     int last_lbfgs_result = 0;
     int corridor_enforcement_passes = 0;
@@ -489,6 +564,37 @@ namespace ego_planner
     tf_sfc::CorridorEvaluation initial_corridor_evaluation;
     multitopology_data_.initial_obstacles_avoided = false;
     wei_swarm_mod_ = wei_swarm_;
+
+    const auto populate_seed_record =
+        [&](tf_sfc::ExperimentRunRecord &record) {
+          record.planning_event_id =
+              "d" + std::to_string(drone_id_) + "-g" +
+              std::to_string(experiment_goal_id_) + "-r" +
+              std::to_string(experiment_replan_id_);
+          record.retry_index = experiment_retry_index_;
+          record.astar_search_attempted =
+              seed_path_build_info.astar_search_attempted;
+          record.astar_search_success =
+              seed_path_build_info.astar_search_success;
+          record.astar_search_call_count =
+              seed_path_build_info.astar_search_call_count;
+          record.astar_search_ms = seed_path_build_info.astar_search_ms;
+          record.raw_seed_path_point_count =
+              seed_path_build_info.raw_seed_path_point_count;
+          record.raw_seed_path_length_m =
+              seed_path_build_info.raw_seed_path_length_m;
+          record.seed_path_point_count =
+              seed_path_build_info.seed_path_point_count;
+          record.seed_path_length_m =
+              seed_path_build_info.seed_path_length_m;
+          record.seed_path_edge_valid =
+              seed_path_build_info.seed_path_edge_valid;
+          record.seed_path_coverage_ratio =
+              seed_path_build_info.seed_path_coverage_ratio;
+          record.seed_path_build_ms =
+              seed_path_build_info.seed_path_build_ms;
+          record.corridor_inflation_ms = tf_sfc_inflation_ms;
+        };
 
     // Preparision 2: Trajectory related params
     t_now_ = ros::Time::now().toSec();
@@ -515,6 +621,17 @@ namespace ego_planner
         tf_sfc::FailureReason uncovered_failure_reason =
             tf_sfc::FailureReason::NONE;
         tf_sfc::FailureReason seed_failure_reason = tf_sfc::FailureReason::NONE;
+        const auto generate_ellipsoid_corridors =
+            [&](const tf_sfc::PointVector &candidate_seed,
+                const tf_sfc::FailureReason candidate_uncovered_reason) {
+              const ros::WallTime inflation_started = ros::WallTime::now();
+              const bool generated = tf_sfc_manager_->generateEllipsoidDecomp(
+                  candidate_seed, piece_num_, candidate_uncovered_reason,
+                  tf_corridors_);
+              tf_sfc_inflation_ms +=
+                  (ros::WallTime::now() - inflation_started).toSec() * 1000.0;
+              return generated;
+            };
         if (!tf_sfc_manager_->ellipsoidDecompAvailable())
         {
           tf_sfc::Corridor failed;
@@ -547,10 +664,8 @@ namespace ego_planner
           {
             guidedInnerPts.col(point_id - 1) = seed_path[point_id];
           }
-          corridor_ok = tf_sfc_manager_->generateEllipsoidDecomp(seed_path,
-                                                                  piece_num_,
-                                                                  uncovered_failure_reason,
-                                                                  tf_corridors_);
+          corridor_ok = generate_ellipsoid_corridors(
+              seed_path, uncovered_failure_reason);
           tf_sfc::FailureReason first_generation_failure =
               tf_sfc::FailureReason::NONE;
           int first_generation_failure_point_id = -1;
@@ -602,6 +717,18 @@ namespace ego_planner
                 tf_sfc::failureReasonName(first_generation_failure);
             fallback_build_info.seed_validation_failure_point_id =
                 first_generation_failure_point_id;
+            fallback_build_info.astar_search_attempted =
+                fallback_build_info.astar_search_attempted ||
+                seed_path_build_info.astar_search_attempted;
+            fallback_build_info.astar_search_success =
+                fallback_build_info.astar_search_success ||
+                seed_path_build_info.astar_search_success;
+            fallback_build_info.astar_search_call_count +=
+                seed_path_build_info.astar_search_call_count;
+            fallback_build_info.astar_search_ms +=
+                seed_path_build_info.astar_search_ms;
+            fallback_build_info.seed_path_build_ms +=
+                seed_path_build_info.seed_path_build_ms;
             if (fallback_seed_ok)
             {
               fallback_build_info.strategy =
@@ -619,9 +746,8 @@ namespace ego_planner
               {
                 guidedInnerPts.col(point_id - 1) = seed_path[point_id];
               }
-              corridor_ok = tf_sfc_manager_->generateEllipsoidDecomp(
-                  seed_path, piece_num_, uncovered_failure_reason,
-                  tf_corridors_);
+              corridor_ok = generate_ellipsoid_corridors(
+                  seed_path, uncovered_failure_reason);
               ROS_INFO("TF-SFC ordinary-A* seed retry %s.",
                        corridor_ok ? "succeeded" : "failed");
             }
@@ -646,7 +772,10 @@ namespace ego_planner
       else if (requested_corridor_method == "obb")
       {
         jerkOpt_.generate(guidedInnerPts, initT);
+        const ros::WallTime inflation_started = ros::WallTime::now();
         corridor_ok = tf_sfc_manager_->generate(jerkOpt_.getTraj(), tf_corridors_);
+        tf_sfc_inflation_ms +=
+            (ros::WallTime::now() - inflation_started).toSec() * 1000.0;
       }
       else
       {
@@ -731,6 +860,7 @@ namespace ego_planner
               seed_path_build_info.velocity_seed_fallback_reason;
           record.seed_validation_failure_point_id =
               seed_path_build_info.seed_validation_failure_point_id;
+          populate_seed_record(record);
           record.tf_sfc_enabled = true;
           record.hard_parameterization_enabled =
               tf_sfc_parameters_.hard_corridor_parameterization;
@@ -746,7 +876,17 @@ namespace ego_planner
           record.trajectory_duration_s = jerkOpt_.getTraj().getTotalDuration();
           for (const tf_sfc::Corridor &corridor : logged_corridors)
           {
-            if (corridor.metrics.valid)
+            const tf_sfc::CorridorMetrics &metrics = corridor.metrics;
+            if (metrics.seed_containment_evaluated)
+            {
+              ++record.seed_containment_evaluated_count;
+              record.seed_contained_corridor_count +=
+                  metrics.seed_contained ? 1 : 0;
+              record.max_seed_containment_violation_m = std::max(
+                  record.max_seed_containment_violation_m,
+                  metrics.seed_containment_max_violation_m);
+            }
+            if (metrics.valid)
             {
               ++record.corridor_count;
             }
@@ -1251,6 +1391,7 @@ namespace ego_planner
           seed_path_build_info.velocity_seed_fallback_reason;
       record.seed_validation_failure_point_id =
           seed_path_build_info.seed_validation_failure_point_id;
+      populate_seed_record(record);
       record.tf_sfc_enabled = tf_sfc_parameters_.enabled;
       record.direction_mode = requested_corridor_method == "obb"
                                   ? static_cast<int>(tf_sfc_parameters_.direction_mode)
@@ -1365,6 +1506,15 @@ namespace ego_planner
         for (const tf_sfc::Corridor &corridor : logged_corridors)
         {
           const tf_sfc::CorridorMetrics &metrics = corridor.metrics;
+          if (metrics.seed_containment_evaluated)
+          {
+            ++record.seed_containment_evaluated_count;
+            record.seed_contained_corridor_count +=
+                metrics.seed_contained ? 1 : 0;
+            record.max_seed_containment_violation_m = std::max(
+                record.max_seed_containment_violation_m,
+                metrics.seed_containment_max_violation_m);
+          }
           if (!metrics.valid)
           {
             ++record.failed_piece_count;
@@ -3178,10 +3328,12 @@ namespace ego_planner
 
   void PolyTrajOptimizer::setExperimentContext(const std::uint64_t goal_id,
                                                const std::uint64_t replan_id,
+                                               const int retry_index,
                                                const int attempt_id)
   {
     experiment_goal_id_ = goal_id;
     experiment_replan_id_ = replan_id;
+    experiment_retry_index_ = retry_index;
     experiment_attempt_id_ = attempt_id;
   }
 
