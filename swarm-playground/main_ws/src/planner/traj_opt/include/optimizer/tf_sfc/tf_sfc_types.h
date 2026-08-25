@@ -103,10 +103,12 @@ struct Parameters
   std::string visualization_frame = "world";
   std::string log_directory = "/tmp/tf_sfc_results/ego";
   std::string experiment_tag = "default";
-  // obb: TF-SFC MVP; ellipsoid_decomp: Liu et al. / DecompUtil baseline.
+  // obb: six-face directional OBB baseline; tf_sfc: proposed trajectory-favorable,
+  // face-bounded inflation; ellipsoid_decomp: Liu et al. / DecompUtil baseline.
   std::string corridor_method = "obb";
   DirectionMode direction_mode = DirectionMode::PCA;
   int max_faces = 12;
+  int max_obs_faces = 6;
   int samples_per_piece = 8;
   int projection_passes = 4;
   int min_valid_pieces = 1;
@@ -146,9 +148,13 @@ struct CorridorMetrics
 {
   int piece_id = -1;
   int face_count = 0;
+  int obstacle_face_count = 0;
+  int obstacle_point_count = 0;
+  bool face_budget_saturated = false;
   double generation_time_ms = 0.0;
   double weighted_width = 0.0;
   double min_sample_slack = -std::numeric_limits<double>::infinity();
+  double anchor_clearance_radius = -std::numeric_limits<double>::infinity();
   double overlap_radius_to_next = -1.0;
   bool seed_containment_evaluated = false;
   bool seed_contained = false;
