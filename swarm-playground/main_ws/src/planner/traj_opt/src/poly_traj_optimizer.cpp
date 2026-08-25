@@ -865,6 +865,123 @@ namespace ego_planner
               tf_sfc_manager_->generate(jerkOpt_.getTraj(), tf_corridors_);
           tf_sfc_inflation_ms +=
               (ros::WallTime::now() - inflation_started).toSec() * 1000.0;
+
+          tf_sfc::FailureReason first_generation_failure =
+              tf_sfc::FailureReason::NONE;
+          int first_generation_failure_point_id = -1;
+          for (const tf_sfc::Corridor &corridor : tf_corridors_)
+          {
+            if (!corridor.metrics.valid)
+            {
+              first_generation_failure = corridor.metrics.failure_reason;
+              first_generation_failure_point_id =
+                  corridor.metrics.piece_id;
+              break;
+            }
+          }
+          const bool retryable_geometry_failure =
+              first_generation_failure ==
+                  tf_sfc::FailureReason::INITIAL_OBB_OCCUPIED ||
+              first_generation_failure ==
+                  tf_sfc::FailureReason::OBSTACLE_SEPARATION_FAILURE ||
+              first_generation_failure ==
+                  tf_sfc::FailureReason::FACE_BUDGET_EXHAUSTED;
+          if (!corridor_ok &&
+              tf_sfc_parameters_
+                  .decomp_retry_seed_validation_without_velocity &&
+              seed_path_build_info.initial_velocity_seed_used &&
+              retryable_geometry_failure)
+          {
+            ROS_WARN(
+                "TF-SFC velocity-aligned seed failed corridor construction "
+                "at piece %d (%s); retrying once with ordinary A*.",
+                first_generation_failure_point_id,
+                tf_sfc::failureReasonName(first_generation_failure));
+            tf_sfc::PointVector fallback_seed_path;
+            int fallback_covered_piece_num = 0;
+            tf_sfc::FailureReason fallback_uncovered_failure_reason =
+                tf_sfc::FailureReason::NONE;
+            tf_sfc::FailureReason fallback_seed_failure_reason =
+                tf_sfc::FailureReason::NONE;
+            SeedPathBuildInfo fallback_build_info;
+            const bool fallback_seed_ok = buildFixedPieceSeedPath(
+                grid_map_, a_star_, iniState.col(0), iniState.col(1),
+                finState.col(0), piece_num_,
+                tf_sfc_parameters_.allow_partial_corridors,
+                tf_sfc_parameters_.min_valid_pieces, 0.0,
+                tf_sfc_parameters_.decomp_initial_velocity_threshold,
+                tf_sfc_parameters_.decomp_degenerate_seed_length,
+                fallback_seed_path, fallback_covered_piece_num,
+                fallback_uncovered_failure_reason,
+                fallback_seed_failure_reason, fallback_build_info);
+            fallback_build_info.initial_velocity_seed_attempted = true;
+            fallback_build_info.initial_velocity_seed_used = false;
+            fallback_build_info.velocity_seed_fallback_used = true;
+            fallback_build_info.velocity_seed_fallback_reason =
+                tf_sfc::failureReasonName(first_generation_failure);
+            fallback_build_info.seed_validation_failure_point_id =
+                first_generation_failure_point_id;
+            fallback_build_info.astar_search_attempted =
+                fallback_build_info.astar_search_attempted ||
+                seed_path_build_info.astar_search_attempted;
+            fallback_build_info.astar_search_success =
+                fallback_build_info.astar_search_success ||
+                seed_path_build_info.astar_search_success;
+            fallback_build_info.astar_search_call_count +=
+                seed_path_build_info.astar_search_call_count;
+            fallback_build_info.astar_search_ms +=
+                seed_path_build_info.astar_search_ms;
+            fallback_build_info.seed_path_build_ms +=
+                seed_path_build_info.seed_path_build_ms;
+            if (fallback_seed_ok)
+            {
+              fallback_build_info.strategy =
+                  "corridor_geometry_fallback_" +
+                  fallback_build_info.strategy;
+              seed_path_build_info = fallback_build_info;
+              seed_path = fallback_seed_path;
+              covered_piece_num = fallback_covered_piece_num;
+              uncovered_failure_reason =
+                  fallback_uncovered_failure_reason;
+              guidedInnerPts = initInnerPts;
+              for (int point_id = 1;
+                   point_id <= covered_piece_num && point_id < piece_num_;
+                   ++point_id)
+              {
+                guidedInnerPts.col(point_id - 1) =
+                    seed_path[point_id];
+              }
+              jerkOpt_.generate(guidedInnerPts, initT);
+              tf_corridors_.clear();
+              const ros::WallTime retry_inflation_started =
+                  ros::WallTime::now();
+              corridor_ok = tf_sfc_manager_->generate(
+                  jerkOpt_.getTraj(), tf_corridors_);
+              tf_sfc_inflation_ms +=
+                  (ros::WallTime::now() - retry_inflation_started)
+                      .toSec() *
+                  1000.0;
+              ROS_INFO("TF-SFC ordinary-A* geometry retry %s.",
+                       corridor_ok ? "succeeded" : "failed");
+            }
+            else
+            {
+              fallback_build_info.strategy =
+                  "corridor_geometry_fallback_failed";
+              seed_path_build_info = fallback_build_info;
+              tf_corridors_.clear();
+              tf_sfc::Corridor failed;
+              failed.metrics.piece_id = 0;
+              failed.metrics.failure_reason =
+                  fallback_seed_failure_reason;
+              tf_corridors_.push_back(failed);
+              ROS_WARN(
+                  "TF-SFC ordinary-A* geometry retry could not build a "
+                  "valid seed (%s).",
+                  tf_sfc::failureReasonName(
+                      fallback_seed_failure_reason));
+            }
+          }
         }
       }
       else
