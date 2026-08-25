@@ -90,6 +90,65 @@ ego_planner::tf_sfc::FailureReason segmentFailureReason(const SegmentState state
   return ego_planner::tf_sfc::FailureReason::SEED_PATH_FAILURE;
 }
 
+// Conservative distance from a point to the rolling-map boundary or to the
+// nearest inflated occupied voxel AABB. This refines MINCO junction locations
+// after A*; it does not alter the A* graph, costs, or returned raw path.
+double pointInflatedClearance(const GridMap::Ptr &grid_map,
+                              const Eigen::Vector3d &point,
+                              const double requested_radius)
+{
+  if (!grid_map || !point.allFinite() ||
+      !grid_map->isInInflatedMap(point) ||
+      grid_map->getInflateOccupancy(point) != 0)
+  {
+    return -std::numeric_limits<double>::infinity();
+  }
+  const double radius = std::max(requested_radius, 0.0);
+  if (radius <= 0.0)
+  {
+    return std::numeric_limits<double>::infinity();
+  }
+
+  Eigen::Vector3d map_low, map_high;
+  grid_map->getInflatedMapBounds(map_low, map_high);
+  double clearance = std::min((point - map_low).minCoeff(),
+                              (map_high - point).minCoeff());
+
+  const double resolution = grid_map->getResolution();
+  const double half_voxel = 0.5 * resolution;
+  const int search_cells = std::max(
+      1, static_cast<int>(std::ceil(
+             (radius + std::sqrt(3.0) * half_voxel) / resolution)));
+  const Eigen::Vector3i center_index =
+      (point / resolution).array().floor().cast<int>();
+  for (int dx = -search_cells; dx <= search_cells; ++dx)
+  {
+    for (int dy = -search_cells; dy <= search_cells; ++dy)
+    {
+      for (int dz = -search_cells; dz <= search_cells; ++dz)
+      {
+        const Eigen::Vector3i index =
+            center_index + Eigen::Vector3i(dx, dy, dz);
+        const Eigen::Vector3d voxel_center =
+            (index.cast<double>().array() + 0.5).matrix() * resolution;
+        if (!grid_map->isInInflatedMap(voxel_center))
+        {
+          continue;
+        }
+        if (grid_map->getInflateOccupancy(voxel_center) == 0)
+        {
+          continue;
+        }
+        const Eigen::Vector3d outside =
+            (point - voxel_center).cwiseAbs().array().max(half_voxel) -
+            Eigen::Vector3d::Constant(half_voxel).array();
+        clearance = std::min(clearance, outside.norm());
+      }
+    }
+  }
+  return clearance;
+}
+
 struct SeedPathBuildInfo
 {
   std::string strategy = "astar";
@@ -136,6 +195,7 @@ bool buildFixedPieceSeedPath(const GridMap::Ptr &grid_map,
                              const int piece_num,
                              const bool allow_partial_corridors,
                              const int min_valid_pieces,
+                             const double min_junction_clearance,
                              const double initial_velocity_segment_length,
                              const double initial_velocity_threshold,
                              const double degenerate_seed_length,
@@ -431,13 +491,31 @@ bool buildFixedPieceSeedPath(const GridMap::Ptr &grid_map,
     simplified.push_back(raw_path[1]);
     current = 1;
   }
+  const double required_junction_clearance =
+      std::max(min_junction_clearance, 0.0);
+  bool overlap_clearance_backoff_used = false;
   while (current + 1 < static_cast<int>(raw_path.size()))
   {
     int next = static_cast<int>(raw_path.size()) - 1;
-    while (next > current + 1 &&
-           segmentState(grid_map, raw_path[current], raw_path[next]) !=
-               SegmentState::FREE)
+    while (next > current + 1)
     {
+      const SegmentState candidate_state =
+          segmentState(grid_map, raw_path[current], raw_path[next]);
+      const bool is_terminal =
+          next + 1 == static_cast<int>(raw_path.size());
+      const bool clearance_ok =
+          is_terminal ||
+          pointInflatedClearance(grid_map, raw_path[next],
+                                 required_junction_clearance) +
+                  1.0e-9 >=
+              required_junction_clearance;
+      if (candidate_state == SegmentState::FREE && clearance_ok)
+      {
+        break;
+      }
+      overlap_clearance_backoff_used =
+          overlap_clearance_backoff_used ||
+          (candidate_state == SegmentState::FREE && !clearance_ok);
       --next;
     }
     const SegmentState state =
@@ -448,8 +526,25 @@ bool buildFixedPieceSeedPath(const GridMap::Ptr &grid_map,
       failure_reason = segmentFailureReason(state);
       return false;
     }
+    const bool is_terminal =
+        next + 1 == static_cast<int>(raw_path.size());
+    if (!is_terminal &&
+        pointInflatedClearance(grid_map, raw_path[next],
+                               required_junction_clearance) +
+                1.0e-9 <
+            required_junction_clearance)
+    {
+      build_info.seed_validation_failure_point_id = next;
+      failure_reason =
+          ego_planner::tf_sfc::FailureReason::OVERLAP_TOO_SMALL;
+      return false;
+    }
     simplified.push_back(raw_path[next]);
     current = next;
+  }
+  if (overlap_clearance_backoff_used)
+  {
+    build_info.strategy += "_overlap_clearance_refined";
   }
 
   int segment_count = static_cast<int>(simplified.size()) - 1;
@@ -694,6 +789,7 @@ namespace ego_planner
                                           iniState.col(1), finState.col(0), piece_num_,
                                           tf_sfc_parameters_.allow_partial_corridors,
                                           tf_sfc_parameters_.min_valid_pieces,
+                                          tf_sfc_parameters_.min_overlap_radius,
                                           tf_sfc_parameters_.decomp_initial_velocity_segment,
                                           tf_sfc_parameters_.decomp_initial_velocity_threshold,
                                           tf_sfc_parameters_.decomp_degenerate_seed_length,
@@ -755,6 +851,7 @@ namespace ego_planner
                 finState.col(0), piece_num_,
                 tf_sfc_parameters_.allow_partial_corridors,
                 tf_sfc_parameters_.min_valid_pieces,
+                tf_sfc_parameters_.min_overlap_radius,
                 0.0,
                 tf_sfc_parameters_.decomp_initial_velocity_threshold,
                 tf_sfc_parameters_.decomp_degenerate_seed_length,
@@ -840,6 +937,7 @@ namespace ego_planner
                 finState.col(0), piece_num_,
                 tf_sfc_parameters_.allow_partial_corridors,
                 tf_sfc_parameters_.min_valid_pieces,
+                tf_sfc_parameters_.min_overlap_radius,
                 tf_sfc_parameters_.decomp_initial_velocity_segment,
                 tf_sfc_parameters_.decomp_initial_velocity_threshold,
                 tf_sfc_parameters_.decomp_degenerate_seed_length,
@@ -908,7 +1006,8 @@ namespace ego_planner
                 grid_map_, a_star_, iniState.col(0), iniState.col(1),
                 finState.col(0), piece_num_,
                 tf_sfc_parameters_.allow_partial_corridors,
-                tf_sfc_parameters_.min_valid_pieces, 0.0,
+                tf_sfc_parameters_.min_valid_pieces,
+                tf_sfc_parameters_.min_overlap_radius, 0.0,
                 tf_sfc_parameters_.decomp_initial_velocity_threshold,
                 tf_sfc_parameters_.decomp_degenerate_seed_length,
                 fallback_seed_path, fallback_covered_piece_num,
