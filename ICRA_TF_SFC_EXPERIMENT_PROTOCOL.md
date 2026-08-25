@@ -168,3 +168,12 @@ itself is unchanged, and search timing/coverage remain separately logged.
 The v11 A* seed was edge-valid, but the first proposed corridor repeatedly failed with `obstacle_separation_failure`. The cause was not search: the obstacle cutting plane required `min_overlap_radius` around every seed sample. That parameter is a junction-overlap radius and must not be interpreted as a whole-piece tube radius. v12 applies it only to the two piece endpoints and introduces `interior_sample_margin` for interior samples. The default interior margin is zero because the occupancy map already contains the configured obstacle inflation. The cutting-plane offset uses the exact support of the axis-aligned occupied voxel along the selected normal, rather than a direction-independent circumscribed-sphere padding. This preserves voxel exclusion without adding a second artificial clearance. These are geometric-semantics corrections; they do not change the A* algorithm or optimizer objective.
 
 For the first v12 validation, keep `interior_sample_margin:=0.0`, use certified-prefix mode, and keep EGO fallback disabled. If generation still fails, classify the failure using the new per-piece fields before changing search or safety parameters.
+
+
+## v12.1 overlap-clearance junction refinement
+
+The v12 diagnostic run contained 820/820 identical failures at piece 0, sample 8. Every failing sample was the first internal MINCO junction (`separation_failure_at_endpoint=1`), its nearest occupied-voxel center was approximately `0.1424 m` away, and the face budget never saturated. The segment interior was no longer the blocker; the greedy line-of-sight simplifier selected the farthest visible A* bend, which lay too close to inflated occupancy to contain the requested `0.08 m` junction ball.
+
+The seed post-processor now checks point-to-inflated-voxel-AABB clearance while simplifying the unchanged raw A* path. A visible bend that cannot support `min_overlap_radius` is backed off to an earlier raw-path point that can. This changes MINCO/SFC junction placement, not A* graph search, costs, or the raw A* result. The same post-processing is used for Liu and proposed methods so the corridor-front-end comparison retains a shared seed policy. When refinement is used, `seed_path_strategy` contains the suffix `_overlap_clearance_refined`.
+
+If no reachable internal A* point can support the requested radius, generation fails explicitly with `overlap_too_small`; the implementation does not silently lower the experiment parameter.
