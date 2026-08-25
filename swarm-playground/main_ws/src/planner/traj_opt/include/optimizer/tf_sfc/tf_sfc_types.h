@@ -60,7 +60,9 @@ enum class FailureReason
   SEED_PATH_OUTSIDE_MAP = 13,
   SEED_PATH_OCCUPIED = 14,
   PIECE_BUDGET_TAIL = 15,
-  HARD_PARAMETERIZATION_FAILURE = 16
+  HARD_PARAMETERIZATION_FAILURE = 16,
+  FACE_BUDGET_EXHAUSTED = 17,
+  OBSTACLE_SEPARATION_FAILURE = 18
 };
 
 inline const char *failureReasonName(const FailureReason reason)
@@ -84,6 +86,8 @@ inline const char *failureReasonName(const FailureReason reason)
   case FailureReason::SEED_PATH_OCCUPIED: return "seed_path_occupied";
   case FailureReason::PIECE_BUDGET_TAIL: return "piece_budget_tail";
   case FailureReason::HARD_PARAMETERIZATION_FAILURE: return "hard_parameterization_failure";
+  case FailureReason::FACE_BUDGET_EXHAUSTED: return "face_budget_exhausted";
+  case FailureReason::OBSTACLE_SEPARATION_FAILURE: return "obstacle_separation_failure";
   }
   return "unknown";
 }
