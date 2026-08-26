@@ -11,6 +11,129 @@ namespace ego_planner
 namespace tf_sfc
 {
 
+namespace
+{
+// Exact closest pair between a line segment and an axis-aligned voxel box.
+// The squared distance is a convex piecewise quadratic in the segment
+// parameter.  Box-face crossing parameters partition [0, 1] into intervals
+// with a fixed active set, so each interval needs at most one stationary test.
+bool closestSegmentAabb(const Eigen::Vector3d &start,
+                        const Eigen::Vector3d &finish,
+                        const Eigen::Vector3d &box_center,
+                        const Eigen::Vector3d &half_extent,
+                        Eigen::Vector3d &segment_point,
+                        Eigen::Vector3d &box_point)
+{
+  if (!start.allFinite() || !finish.allFinite() ||
+      !box_center.allFinite() || !half_extent.allFinite())
+  {
+    return false;
+  }
+
+  const Eigen::Vector3d delta = finish - start;
+  std::array<double, 8> breakpoints;
+  int breakpoint_count = 0;
+  breakpoints[breakpoint_count++] = 0.0;
+  breakpoints[breakpoint_count++] = 1.0;
+  for (int axis = 0; axis < 3; ++axis)
+  {
+    if (std::abs(delta(axis)) <= 1.0e-12)
+    {
+      continue;
+    }
+    for (int side = 0; side < 2; ++side)
+    {
+      const double bound = box_center(axis) +
+                           (side == 0 ? -half_extent(axis)
+                                      : half_extent(axis));
+      const double ratio = (bound - start(axis)) / delta(axis);
+      if (ratio > 0.0 && ratio < 1.0)
+      {
+        breakpoints[breakpoint_count++] = ratio;
+      }
+    }
+  }
+  std::sort(breakpoints.begin(),
+            breakpoints.begin() + breakpoint_count);
+  int unique_count = 0;
+  for (int index = 0; index < breakpoint_count; ++index)
+  {
+    if (unique_count == 0 ||
+        std::abs(breakpoints[index] - breakpoints[unique_count - 1]) >
+            1.0e-12)
+    {
+      breakpoints[unique_count++] = breakpoints[index];
+    }
+  }
+
+  double best_distance_squared =
+      std::numeric_limits<double>::infinity();
+  const auto evaluate = [&](const double ratio) {
+    const Eigen::Vector3d candidate_segment = start + ratio * delta;
+    Eigen::Vector3d candidate_box;
+    for (int axis = 0; axis < 3; ++axis)
+    {
+      candidate_box(axis) = std::max(
+          box_center(axis) - half_extent(axis),
+          std::min(box_center(axis) + half_extent(axis),
+                   candidate_segment(axis)));
+    }
+    const double distance_squared =
+        (candidate_box - candidate_segment).squaredNorm();
+    if (distance_squared < best_distance_squared)
+    {
+      best_distance_squared = distance_squared;
+      segment_point = candidate_segment;
+      box_point = candidate_box;
+    }
+  };
+
+  for (int index = 0; index < unique_count; ++index)
+  {
+    evaluate(breakpoints[index]);
+  }
+  for (int interval = 0; interval + 1 < unique_count; ++interval)
+  {
+    const double lower_ratio = breakpoints[interval];
+    const double upper_ratio = breakpoints[interval + 1];
+    const double middle_ratio = 0.5 * (lower_ratio + upper_ratio);
+    const Eigen::Vector3d middle = start + middle_ratio * delta;
+    double quadratic = 0.0;
+    double linear_constant = 0.0;
+    for (int axis = 0; axis < 3; ++axis)
+    {
+      double linear = 0.0;
+      double constant = 0.0;
+      const double lower =
+          box_center(axis) - half_extent(axis);
+      const double upper =
+          box_center(axis) + half_extent(axis);
+      if (middle(axis) < lower)
+      {
+        linear = -delta(axis);
+        constant = lower - start(axis);
+      }
+      else if (middle(axis) > upper)
+      {
+        linear = delta(axis);
+        constant = start(axis) - upper;
+      }
+      quadratic += linear * linear;
+      linear_constant += linear * constant;
+    }
+    if (quadratic > 1.0e-18)
+    {
+      const double stationary = -linear_constant / quadratic;
+      if (stationary > lower_ratio && stationary < upper_ratio)
+      {
+        evaluate(stationary);
+      }
+    }
+  }
+  return std::isfinite(best_distance_squared);
+}
+} // namespace
+
 DirectionalInflator::DirectionalInflator(const Parameters &parameters)
     : parameters_(parameters)
 {
@@ -476,25 +599,14 @@ DirectionalInflator::buildFaceBoundedCandidate(
       return SpaceState::OCCUPIED;
     }
 
-    // Treat every occupied observation as its full voxel AABB.  A vector to
-    // the voxel centre is not, in general, a separating-axis candidate for an
-    // endpoint close to a voxel face or edge: subtracting the AABB support
-    // afterwards can incorrectly report a negative gap even when the endpoint
-    // has the requested clearance.  RsI/FIRI-style restrictive inflation uses
-    // a support plane of the obstacle set, so generate normals from seed points
-    // to their closest points on the occupied voxel AABB.
+    // Build a small deterministic separating-axis set.  Centre directions
+    // retain the successful v12.4 behaviour for a complete seed segment.
+    // Exact segment--voxel-AABB closest-pair directions repair the endpoint
+    // cases for which a centre direction is not the maximum-margin support
+    // plane.  The certified-gap test below selects between them.
     PointVector normal_candidates;
-    const Eigen::Vector3d voxel_half_extent =
-        Eigen::Vector3d::Constant(0.5 * map_resolution);
-    const auto append_voxel_support_normal =
-        [&normal_candidates, &obstacle, &voxel_half_extent](
-            const Eigen::Vector3d &seed_point) {
-          const Eigen::Vector3d centre_delta = seed_point - obstacle;
-          const Eigen::Vector3d closest_on_voxel =
-              obstacle +
-              centre_delta.cwiseMax(-voxel_half_extent)
-                  .cwiseMin(voxel_half_extent);
-          const Eigen::Vector3d candidate = closest_on_voxel - seed_point;
+    const auto append_normal_candidate =
+        [&normal_candidates](const Eigen::Vector3d &candidate) {
           if (!candidate.allFinite() || candidate.norm() <= 1.0e-12)
           {
             return;
@@ -509,10 +621,41 @@ DirectionalInflator::buildFaceBoundedCandidate(
           }
           normal_candidates.push_back(candidate);
         };
-    append_voxel_support_normal(nearest_seed_point);
+
+    append_normal_candidate(obstacle - nearest_seed_point);
     for (const Eigen::Vector3d &sample : samples)
     {
-      append_voxel_support_normal(sample);
+      append_normal_candidate(obstacle - sample);
+    }
+
+    const Eigen::Vector3d voxel_half_extent =
+        Eigen::Vector3d::Constant(0.5 * map_resolution);
+    if (samples.size() == 1)
+    {
+      Eigen::Vector3d closest_seed;
+      Eigen::Vector3d closest_voxel;
+      if (closestSegmentAabb(samples.front(), samples.front(), obstacle,
+                             voxel_half_extent, closest_seed,
+                             closest_voxel))
+      {
+        append_normal_candidate(closest_voxel - closest_seed);
+      }
+    }
+    else
+    {
+      for (size_t segment_id = 0;
+           segment_id + 1 < samples.size(); ++segment_id)
+      {
+        Eigen::Vector3d closest_seed;
+        Eigen::Vector3d closest_voxel;
+        if (closestSegmentAabb(samples[segment_id],
+                               samples[segment_id + 1], obstacle,
+                               voxel_half_extent, closest_seed,
+                               closest_voxel))
+        {
+          append_normal_candidate(closest_voxel - closest_seed);
+        }
+      }
     }
 
     Eigen::Vector3d normal = Eigen::Vector3d::Zero();
