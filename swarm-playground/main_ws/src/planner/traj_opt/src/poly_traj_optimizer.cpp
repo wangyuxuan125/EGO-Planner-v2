@@ -3574,7 +3574,7 @@ namespace ego_planner
     nh.param("tf_sfc/safety_margin", tf_sfc_parameters_.safety_margin, 0.25);
     nh.param("tf_sfc/interior_sample_margin",
              tf_sfc_parameters_.interior_sample_margin, 0.0);
-    nh.param("tf_sfc/min_overlap_radius", tf_sfc_parameters_.min_overlap_radius, 0.15);
+    nh.param("tf_sfc/min_overlap_radius", tf_sfc_parameters_.min_overlap_radius, 0.02);
     nh.param("tf_sfc/junction_refine_radius",
              tf_sfc_parameters_.junction_refine_radius, 0.50);
     nh.param("tf_sfc/junction_refine_step",
