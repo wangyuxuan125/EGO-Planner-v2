@@ -476,28 +476,57 @@ DirectionalInflator::buildFaceBoundedCandidate(
       return SpaceState::OCCUPIED;
     }
 
-    Eigen::Vector3d normal =
-        (obstacle - nearest_seed_point).normalized();
-    // Exact support of an axis-aligned occupied voxel in the plane-normal
-    // direction.  The previous half-diagonal sphere was safe but added an
-    // unnecessary orientation-independent clearance on top of map inflation.
-    const double voxel_padding =
-        0.5 * map_resolution * normal.cwiseAbs().sum();
-    double offset = normal.dot(obstacle) - voxel_padding;
-    double sample_support =
-        -std::numeric_limits<double>::infinity();
-    int support_sample_id = -1;
-    for (size_t sample_id = 0; sample_id < samples.size(); ++sample_id)
+    // Select the candidate normal with the largest certified separation
+    // gap. The closest-polyline normal is exact for an unbuffered line and a
+    // point obstacle; endpoint overlap balls and voxel AABB support can make a
+    // sample-to-obstacle direction more favorable.
+    PointVector normal_candidates;
+    normal_candidates.push_back(obstacle - nearest_seed_point);
+    for (const Eigen::Vector3d &sample : samples)
     {
-      const double support =
-          normal.dot(samples[sample_id]) + sampleMargin(sample_id);
-      if (support > sample_support)
+      normal_candidates.push_back(obstacle - sample);
+    }
+
+    Eigen::Vector3d normal = Eigen::Vector3d::Zero();
+    double offset = -std::numeric_limits<double>::infinity();
+    double best_gap = -std::numeric_limits<double>::infinity();
+    int support_sample_id = -1;
+    for (const Eigen::Vector3d &candidate : normal_candidates)
+    {
+      if (!candidate.allFinite() || candidate.norm() <= 1.0e-12)
       {
-        sample_support = support;
-        support_sample_id = static_cast<int>(sample_id);
+        continue;
+      }
+      const Eigen::Vector3d candidate_normal = candidate.normalized();
+      const double candidate_voxel_padding =
+          0.5 * map_resolution * candidate_normal.cwiseAbs().sum();
+      const double candidate_offset =
+          candidate_normal.dot(obstacle) - candidate_voxel_padding;
+      double candidate_support =
+          -std::numeric_limits<double>::infinity();
+      int candidate_support_sample_id = -1;
+      for (size_t sample_id = 0; sample_id < samples.size(); ++sample_id)
+      {
+        const double support =
+            candidate_normal.dot(samples[sample_id]) +
+            sampleMargin(sample_id);
+        if (support > candidate_support)
+        {
+          candidate_support = support;
+          candidate_support_sample_id = static_cast<int>(sample_id);
+        }
+      }
+      const double gap = candidate_offset - candidate_support;
+      if (gap > best_gap)
+      {
+        best_gap = gap;
+        normal = candidate_normal;
+        offset = candidate_offset;
+        support_sample_id = candidate_support_sample_id;
       }
     }
-    if (sample_support > offset + kTolerance)
+    if (!normal.allFinite() || normal.norm() <= 1.0e-12 ||
+        best_gap < -kTolerance)
     {
       separation_failure_sample_id = support_sample_id;
       separation_failure_at_endpoint =
