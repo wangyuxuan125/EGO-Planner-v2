@@ -284,7 +284,7 @@ bool segmentHasInflatedClearance(const GridMap::Ptr &grid_map,
   const Eigen::Vector3i finish_index =
       (finish / resolution).array().floor().cast<int>();
   if (!neighbourhood_is_clear(start_index) ||
-      (finish_index != start_index &&
+      ((finish_index - start_index).squaredNorm() > 0 &&
        !neighbourhood_is_clear(finish_index)))
   {
     return false;
