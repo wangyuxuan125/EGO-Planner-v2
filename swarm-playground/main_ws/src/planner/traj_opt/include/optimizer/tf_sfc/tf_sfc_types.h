@@ -122,7 +122,9 @@ struct Parameters
   // Required slack for non-junction trajectory samples against obstacle cuts.
   // Junction samples use min_overlap_radius instead.
   double interior_sample_margin = 0.0;
-  double min_overlap_radius = 0.15;
+  // Hard full-dimensional overlap acceptance floor. Larger overlap is a
+  // reported quality objective, not a mandatory tube radius.
+  double min_overlap_radius = 0.02;
   // Radius and grid step for relocating simplified A* bends while preserving
   // collision-free visibility to both neighboring seed segments.
   double junction_refine_radius = 0.50;
