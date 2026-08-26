@@ -309,3 +309,39 @@ python3 tools/analyze_tf_sfc_v9.py \
 建议将方法命名为 `EGO + EllipsoidDecomp SFC (Liu et al., ICRA 2017)`，并与 `EGO original`、`EGO + PCA OBB-SFC` 分开。所有方法必须使用相同地图 seed、起终点、局部地图范围、障碍膨胀、动力学限制和失败计数规则。若 EllipsoidDecomp 使用预先无碰撞路径，而 OBB 使用未优化初始轨迹，需要把路径搜索/预处理耗时纳入总规划时间，或为所有方法提供相同的无碰撞参考路径，否则比较不公平。
 
 本分支现在已通过 `tf_sfc_corridor_method:=ellipsoid_decomp` 实际调用 DecompUtil，并用 A* 无碰撞骨架驱动同一套 EGO 优化器。论文中应将它标记为独立基线，不与 DecompROS 可视化或 OBB-SFC 混称。
+
+
+## 8. v12.5：体素支撑平面回归
+
+v12.4 固定种子日志不是 A* 失败：110/110 次调用均通过 A* 和边占据验证，但第 1 个 corridor 在端点处集中出现 `obstacle_separation_failure`。最近障碍体素中心距离约为 `0.07575 m`。旧实现先使用“种子到体素中心”的方向，再减去体素 AABB 支撑半径；该方向不一定是点/线段与体素盒的分离轴，因此可能把仍有净空的种子错误判为不可分。
+
+v12.5 对每个占据体素按完整 AABB 处理，并使用种子到体素 AABB 最近点的方向构造 restrictive support plane。A* 图、搜索代价和原始路径保持不变；这一步是后续 FIRI/RsI seed-containment 前端的几何基础。
+
+重新编译后运行：
+
+```bash
+roslaunch ego_planner single_drone_interactive.launch \
+  map_seed:=42 \
+  tf_sfc_enabled:=true \
+  tf_sfc_corridor_method:=tf_sfc \
+  tf_sfc_direction_mode:=1 \
+  tf_sfc_max_faces:=12 \
+  tf_sfc_max_obstacle_faces:=6 \
+  tf_sfc_safety_margin:=0.10 \
+  tf_sfc_min_overlap_radius:=0.02 \
+  tf_sfc_allow_partial_corridors:=true \
+  tf_sfc_min_valid_pieces:=2 \
+  tf_sfc_allow_ego_fallback:=false \
+  tf_sfc_hard_corridor_parameterization:=true \
+  tf_sfc_use_soft_penalty:=true \
+  tf_sfc_experiment_tag:=proposed_pca_f12_v12_5_voxel_support
+```
+
+本阶段通过条件是至少一次规划同时满足：
+
+- `corridor_count >= 2`；
+- `tf_sfc_generated = 1`；
+- `optimizer_ms > 0`；
+- `hard_parameterization_active = 1`。
+
+在通过该门槛前，不叠加完整 MVIE、MINCO-Hessian 或新的面选择器，以保持失败归因清晰。
