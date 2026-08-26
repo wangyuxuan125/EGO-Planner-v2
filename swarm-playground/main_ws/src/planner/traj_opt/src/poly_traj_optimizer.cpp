@@ -812,10 +812,19 @@ bool buildFixedPieceSeedPath(const GridMap::Ptr &grid_map,
   while (current + 1 < static_cast<int>(raw_path.size()))
   {
     int next = static_cast<int>(raw_path.size()) - 1;
-    while (next > current + 1 &&
-           segmentState(grid_map, raw_path[current], raw_path[next]) !=
-               SegmentState::FREE)
+    while (next > current + 1)
     {
+      const SegmentState candidate_state =
+          segmentState(grid_map, raw_path[current], raw_path[next]);
+      const bool candidate_capsule_clear =
+          candidate_state == SegmentState::FREE &&
+          segmentHasInflatedClearance(
+              grid_map, raw_path[current], raw_path[next],
+              std::max(min_junction_clearance, 0.0));
+      if (candidate_capsule_clear)
+      {
+        break;
+      }
       --next;
     }
     const SegmentState state =
@@ -824,6 +833,15 @@ bool buildFixedPieceSeedPath(const GridMap::Ptr &grid_map,
     {
       build_info.seed_validation_failure_point_id = current;
       failure_reason = segmentFailureReason(state);
+      return false;
+    }
+    if (!segmentHasInflatedClearance(
+            grid_map, raw_path[current], raw_path[next],
+            std::max(min_junction_clearance, 0.0)))
+    {
+      build_info.seed_validation_failure_point_id = current;
+      failure_reason =
+          ego_planner::tf_sfc::FailureReason::OVERLAP_TOO_SMALL;
       return false;
     }
     simplified.push_back(raw_path[next]);
