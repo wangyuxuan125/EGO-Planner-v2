@@ -420,14 +420,42 @@ DirectionalInflator::buildFaceBoundedCandidate(
 
     int nearest_sample_id = -1;
     double nearest_distance = std::numeric_limits<double>::infinity();
-    for (size_t sample_id = 0; sample_id < samples.size(); ++sample_id)
+    Eigen::Vector3d nearest_seed_point = Eigen::Vector3d::Zero();
+    if (samples.size() == 1)
     {
-      const double distance =
-          (obstacle - samples[sample_id]).squaredNorm();
-      if (distance < nearest_distance)
+      nearest_sample_id = 0;
+      nearest_seed_point = samples.front();
+      nearest_distance = (obstacle - nearest_seed_point).squaredNorm();
+    }
+    else
+    {
+      // Use the closest point on the continuous seed polyline. A normal from
+      // the closest discrete sample can point along the segment and reject
+      // another sample even when the complete line is collision-free.
+      for (size_t segment_id = 0; segment_id + 1 < samples.size();
+           ++segment_id)
       {
-        nearest_distance = distance;
-        nearest_sample_id = static_cast<int>(sample_id);
+        const Eigen::Vector3d segment =
+            samples[segment_id + 1] - samples[segment_id];
+        const double squared_length = segment.squaredNorm();
+        double ratio = 0.0;
+        if (squared_length > 1.0e-12)
+        {
+          ratio = (obstacle - samples[segment_id]).dot(segment) /
+                  squared_length;
+          ratio = std::max(0.0, std::min(1.0, ratio));
+        }
+        const Eigen::Vector3d closest =
+            samples[segment_id] + ratio * segment;
+        const double distance = (obstacle - closest).squaredNorm();
+        if (distance < nearest_distance)
+        {
+          nearest_distance = distance;
+          nearest_seed_point = closest;
+          nearest_sample_id =
+              ratio <= 0.5 ? static_cast<int>(segment_id)
+                           : static_cast<int>(segment_id + 1);
+        }
       }
     }
     if (nearest_sample_id >= 0)
@@ -449,7 +477,7 @@ DirectionalInflator::buildFaceBoundedCandidate(
     }
 
     Eigen::Vector3d normal =
-        (obstacle - samples[nearest_sample_id]).normalized();
+        (obstacle - nearest_seed_point).normalized();
     // Exact support of an axis-aligned occupied voxel in the plane-normal
     // direction.  The previous half-diagonal sphere was safe but added an
     // unnecessary orientation-independent clearance on top of map inflation.
