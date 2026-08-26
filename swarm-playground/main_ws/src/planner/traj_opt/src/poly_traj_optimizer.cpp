@@ -307,6 +307,89 @@ bool segmentHasInflatedClearance(const GridMap::Ptr &grid_map,
   return true;
 }
 
+// Repair only clearance-invalid diagonal edges in the returned A* polyline.
+// A* remains unchanged and its raw path metrics are logged before this step.
+// For a 26-neighbour grid edge, deterministic axis-order permutations replace
+// a corner-skimming diagonal with at most three clearance-certified axial
+// edges. All corridor methods share this post-A* seed repair.
+bool repairRawPathCornerCuts(
+    const GridMap::Ptr &grid_map,
+    std::vector<Eigen::Vector3d> &raw_path,
+    const double required_clearance,
+    bool &repair_used,
+    int &failure_point_id)
+{
+  repair_used = false;
+  failure_point_id = -1;
+  if (!grid_map || raw_path.size() < 2)
+  {
+    return false;
+  }
+
+  std::vector<Eigen::Vector3d> repaired;
+  repaired.reserve(3 * raw_path.size());
+  repaired.push_back(raw_path.front());
+  for (size_t point_id = 1; point_id < raw_path.size(); ++point_id)
+  {
+    const Eigen::Vector3d target = raw_path[point_id];
+    const Eigen::Vector3d edge_start = repaired.back();
+    if (segmentHasInflatedClearance(
+            grid_map, edge_start, target, required_clearance))
+    {
+      repaired.push_back(target);
+      continue;
+    }
+
+    bool edge_repaired = false;
+    std::array<int, 3> axis_order{{0, 1, 2}};
+    do
+    {
+      Eigen::Vector3d current = edge_start;
+      std::vector<Eigen::Vector3d> candidate_points;
+      bool candidate_valid = true;
+      for (const int axis : axis_order)
+      {
+        if (std::abs(target(axis) - current(axis)) <= 1.0e-9)
+        {
+          continue;
+        }
+        Eigen::Vector3d next = current;
+        next(axis) = target(axis);
+        if (!grid_map->isInInflatedMap(next) ||
+            grid_map->getInflateOccupancy(next) != 0 ||
+            !segmentHasInflatedClearance(
+                grid_map, current, next, required_clearance))
+        {
+          candidate_valid = false;
+          break;
+        }
+        candidate_points.push_back(next);
+        current = next;
+      }
+      if (candidate_valid &&
+          (current - target).norm() <= 1.0e-8)
+      {
+        repaired.insert(repaired.end(),
+                        candidate_points.begin(),
+                        candidate_points.end());
+        edge_repaired = true;
+        repair_used = true;
+        break;
+      }
+    } while (std::next_permutation(axis_order.begin(),
+                                   axis_order.end()));
+
+    if (!edge_repaired)
+    {
+      failure_point_id = static_cast<int>(point_id) - 1;
+      return false;
+    }
+  }
+
+  raw_path.swap(repaired);
+  return true;
+}
+
 // Conservative distance from a point to the rolling-map boundary or to the
 // nearest inflated occupied voxel AABB. This refines MINCO junction locations
 // after A*; it does not alter the A* graph, costs, or returned raw path.
@@ -799,6 +882,25 @@ bool buildFixedPieceSeedPath(const GridMap::Ptr &grid_map,
   {
     build_info.raw_seed_path_length_m +=
         (raw_path[point_id] - raw_path[point_id - 1]).norm();
+  }
+
+  bool corner_repair_used = false;
+  int corner_repair_failure_point_id = -1;
+  if (!repairRawPathCornerCuts(
+          grid_map, raw_path,
+          std::max(min_junction_clearance, 0.0),
+          corner_repair_used, corner_repair_failure_point_id))
+  {
+    build_info.seed_validation_failure_point_id =
+        corner_repair_failure_point_id;
+    build_info.strategy += "_clearance_corner_repair_failed";
+    failure_reason =
+        ego_planner::tf_sfc::FailureReason::OVERLAP_TOO_SMALL;
+    return false;
+  }
+  if (corner_repair_used)
+  {
+    build_info.strategy += "_clearance_corner_repaired";
   }
 
   ego_planner::tf_sfc::PointVector simplified;
