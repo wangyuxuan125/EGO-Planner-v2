@@ -476,15 +476,43 @@ DirectionalInflator::buildFaceBoundedCandidate(
       return SpaceState::OCCUPIED;
     }
 
-    // Select the candidate normal with the largest certified separation
-    // gap. The closest-polyline normal is exact for an unbuffered line and a
-    // point obstacle; endpoint overlap balls and voxel AABB support can make a
-    // sample-to-obstacle direction more favorable.
+    // Treat every occupied observation as its full voxel AABB.  A vector to
+    // the voxel centre is not, in general, a separating-axis candidate for an
+    // endpoint close to a voxel face or edge: subtracting the AABB support
+    // afterwards can incorrectly report a negative gap even when the endpoint
+    // has the requested clearance.  RsI/FIRI-style restrictive inflation uses
+    // a support plane of the obstacle set, so generate normals from seed points
+    // to their closest points on the occupied voxel AABB.
     PointVector normal_candidates;
-    normal_candidates.push_back(obstacle - nearest_seed_point);
+    const Eigen::Vector3d voxel_half_extent =
+        Eigen::Vector3d::Constant(0.5 * map_resolution);
+    const auto append_voxel_support_normal =
+        [&normal_candidates, &obstacle, &voxel_half_extent](
+            const Eigen::Vector3d &seed_point) {
+          const Eigen::Vector3d centre_delta = seed_point - obstacle;
+          const Eigen::Vector3d closest_on_voxel =
+              obstacle +
+              centre_delta.cwiseMax(-voxel_half_extent)
+                  .cwiseMin(voxel_half_extent);
+          const Eigen::Vector3d candidate = closest_on_voxel - seed_point;
+          if (!candidate.allFinite() || candidate.norm() <= 1.0e-12)
+          {
+            return;
+          }
+          const Eigen::Vector3d unit = candidate.normalized();
+          for (const Eigen::Vector3d &existing : normal_candidates)
+          {
+            if (existing.normalized().dot(unit) > 0.9995)
+            {
+              return;
+            }
+          }
+          normal_candidates.push_back(candidate);
+        };
+    append_voxel_support_normal(nearest_seed_point);
     for (const Eigen::Vector3d &sample : samples)
     {
-      normal_candidates.push_back(obstacle - sample);
+      append_voxel_support_normal(sample);
     }
 
     Eigen::Vector3d normal = Eigen::Vector3d::Zero();
