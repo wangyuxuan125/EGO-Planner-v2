@@ -298,3 +298,18 @@ GCOPTER 只承担论文所需的离线走廊/优化器基准，不完整移植 E
 - 已完成的多机协同走廊方法。
 
 只有在 M0–M6 全部通过、schema 和 commit 冻结后，才开始生成论文最终数值；M7 真机通过后再冻结论文最终主表。
+
+
+## 11. TF-FB-FIRI 分阶段实现约束
+
+为避免在不可运行的前端上同时引入 MVIE、Hessian 和面选择变量，后续实现固定为以下顺序：
+
+1. **G0 — Restrictive voxel support**：占据体素使用 AABB 支撑平面，保证 seed-containment 与 obstacle exclusion 的几何判据一致；A* 保持不变。
+2. **G1 — Stable seed/overlap**：共享 junction seed 具有可认证的正体积 overlap；局部失败只触发 seed relocation 或 segment split。
+3. **G2 — Budgeted inflation**：在固定迭代/时间预算内执行 FIRI(SI) 或少量 RsI–MVIE 更新。
+4. **G3 — MINCO-favorable metric**：由 condensed MINCO Hessian/Gramian 构造 compliance directions，替换仅由 PCA/Frenet 得到的方向。
+5. **G4 — Certified face budget**：候选支撑面覆盖全部局部障碍；若 `F_max` 内不可覆盖，则切分 seed，不允许静默丢弃安全面。
+6. **G5 — Constraint reduction**：同时控制 corridor 数 `P` 与总面数 `sum(F_i)`，并记录实际 half-space evaluation 数。
+7. **G6 — Continuous containment**：在需要严格连续保证的实验中采用 Bernstein/control-point containment；hard junction 不能单独表述为整段 hard corridor。
+
+G0 的运行门槛是 `corridor_count >= 2`、`tf_sfc_generated=1`、`optimizer_ms>0` 和 `hard_parameterization_active=1`。只有当前一阶段在固定 seed 回归中通过，才进入下一阶段。
