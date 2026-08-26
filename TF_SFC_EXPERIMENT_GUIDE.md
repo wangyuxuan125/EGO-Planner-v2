@@ -345,3 +345,24 @@ roslaunch ego_planner single_drone_interactive.launch \
 - `hard_parameterization_active = 1`。
 
 在通过该门槛前，不叠加完整 MVIE、MINCO-Hessian 或新的面选择器，以保持失败归因清晰。
+
+
+## 9. v12.6：组合支撑方向与精确 segment–voxel 距离
+
+v12.5 固定场景产生 1120 次同一事件的重试，全部在第 0 个 corridor 的端点 sample 0 失败。与 v12.4 相比，单独用“种子到 AABB 最近点”方向替换体素中心方向造成了回归：该方向对单点最优，但不一定把完整种子线段放在同一安全半空间。
+
+v12.6 使用以下有限候选集，并仍按最大认证间隙选面：
+
+1. 连续种子到体素中心的方向；
+2. 各离散种子点到体素中心的方向；
+3. 每个种子子线段与占据体素 AABB 的精确最近点对方向。
+
+线段—AABB 最近对通过分段凸二次函数的解析最小化计算，不进行高密度采样。现有 `min_obstacle_sample_distance_m` 从本版本开始记录种子线段到占据体素 AABB 的真实距离，而不是到体素中心的距离。
+
+回归标签：
+
+```bash
+tf_sfc_experiment_tag:=proposed_pca_f12_v12_6_segment_voxel_support
+```
+
+仍以四项 G0 条件作为通过标准。确定性失败时只保留 5–10 次重试。
