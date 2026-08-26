@@ -26,7 +26,7 @@
     <arg name="tf_sfc_visualization_frame" default="world"/>
     <arg name="tf_sfc_min_valid_pieces" default="1"/>
     <arg name="tf_sfc_safety_margin" default="0.10"/>
-    <arg name="tf_sfc_min_overlap_radius" default="0.08"/>
+    <arg name="tf_sfc_min_overlap_radius" default="0.02"/>
     <arg name="tf_sfc_interior_sample_margin" default="0.0"/>
     <arg name="tf_sfc_junction_refine_radius" default="0.50"/>
     <arg name="tf_sfc_junction_refine_step" default="0.05"/>
