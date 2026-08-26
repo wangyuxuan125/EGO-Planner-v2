@@ -1,5 +1,7 @@
 #include "optimizer/poly_traj_optimizer.h"
 
+#include <array>
+
 #ifdef TF_SFC_WITH_DECOMP_ROS
 #include <decomp_ros_msgs/PolyhedronArray.h>
 #endif
@@ -90,6 +92,221 @@ ego_planner::tf_sfc::FailureReason segmentFailureReason(const SegmentState state
   return ego_planner::tf_sfc::FailureReason::SEED_PATH_FAILURE;
 }
 
+// Exact squared distance between a segment and an axis-aligned voxel box.
+// As in the TF-SFC inflator, box-face crossing parameters partition [0, 1]
+// into intervals with a fixed active set, so the convex piecewise quadratic
+// needs only its interval endpoints and stationary points.
+double segmentAabbDistanceSquared(const Eigen::Vector3d &start,
+                                  const Eigen::Vector3d &finish,
+                                  const Eigen::Vector3d &box_center,
+                                  const Eigen::Vector3d &half_extent)
+{
+  if (!start.allFinite() || !finish.allFinite() ||
+      !box_center.allFinite() || !half_extent.allFinite())
+  {
+    return -std::numeric_limits<double>::infinity();
+  }
+
+  const Eigen::Vector3d delta = finish - start;
+  std::array<double, 8> breakpoints;
+  int breakpoint_count = 0;
+  breakpoints[breakpoint_count++] = 0.0;
+  breakpoints[breakpoint_count++] = 1.0;
+  for (int axis = 0; axis < 3; ++axis)
+  {
+    if (std::abs(delta(axis)) <= 1.0e-12)
+    {
+      continue;
+    }
+    for (int side = 0; side < 2; ++side)
+    {
+      const double bound =
+          box_center(axis) +
+          (side == 0 ? -half_extent(axis) : half_extent(axis));
+      const double ratio = (bound - start(axis)) / delta(axis);
+      if (ratio > 0.0 && ratio < 1.0)
+      {
+        breakpoints[breakpoint_count++] = ratio;
+      }
+    }
+  }
+  std::sort(breakpoints.begin(),
+            breakpoints.begin() + breakpoint_count);
+  int unique_count = 0;
+  for (int index = 0; index < breakpoint_count; ++index)
+  {
+    if (unique_count == 0 ||
+        std::abs(breakpoints[index] - breakpoints[unique_count - 1]) >
+            1.0e-12)
+    {
+      breakpoints[unique_count++] = breakpoints[index];
+    }
+  }
+
+  double best_distance_squared =
+      std::numeric_limits<double>::infinity();
+  const auto evaluate = [&](const double ratio) {
+    const Eigen::Vector3d segment_point = start + ratio * delta;
+    Eigen::Vector3d box_point;
+    for (int axis = 0; axis < 3; ++axis)
+    {
+      box_point(axis) =
+          std::max(box_center(axis) - half_extent(axis),
+                   std::min(box_center(axis) + half_extent(axis),
+                            segment_point(axis)));
+    }
+    best_distance_squared =
+        std::min(best_distance_squared,
+                 (box_point - segment_point).squaredNorm());
+  };
+
+  for (int index = 0; index < unique_count; ++index)
+  {
+    evaluate(breakpoints[index]);
+  }
+  for (int interval = 0; interval + 1 < unique_count; ++interval)
+  {
+    const double lower_ratio = breakpoints[interval];
+    const double upper_ratio = breakpoints[interval + 1];
+    const double middle_ratio = 0.5 * (lower_ratio + upper_ratio);
+    const Eigen::Vector3d middle = start + middle_ratio * delta;
+    double quadratic = 0.0;
+    double linear_constant = 0.0;
+    for (int axis = 0; axis < 3; ++axis)
+    {
+      double linear = 0.0;
+      double constant = 0.0;
+      const double lower = box_center(axis) - half_extent(axis);
+      const double upper = box_center(axis) + half_extent(axis);
+      if (middle(axis) < lower)
+      {
+        linear = -delta(axis);
+        constant = lower - start(axis);
+      }
+      else if (middle(axis) > upper)
+      {
+        linear = delta(axis);
+        constant = start(axis) - upper;
+      }
+      quadratic += linear * linear;
+      linear_constant += linear * constant;
+    }
+    if (quadratic > 1.0e-18)
+    {
+      const double stationary = -linear_constant / quadratic;
+      if (stationary > lower_ratio && stationary < upper_ratio)
+      {
+        evaluate(stationary);
+      }
+    }
+  }
+  return best_distance_squared;
+}
+
+// A convex corridor that contains an overlap ball at both segment endpoints
+// must contain the complete radius-r capsule between them.  Collision-free
+// ray traversal alone only certifies the centreline.  This test checks the
+// capsule against occupied inflated voxel AABBs without changing A* itself.
+bool segmentHasInflatedClearance(const GridMap::Ptr &grid_map,
+                                 const Eigen::Vector3d &start,
+                                 const Eigen::Vector3d &finish,
+                                 const double required_clearance)
+{
+  if (!grid_map || !start.allFinite() || !finish.allFinite() ||
+      segmentState(grid_map, start, finish) != SegmentState::FREE)
+  {
+    return false;
+  }
+  const double radius = std::max(required_clearance, 0.0);
+  if (radius <= 0.0)
+  {
+    return true;
+  }
+
+  Eigen::Vector3d map_low, map_high;
+  grid_map->getInflatedMapBounds(map_low, map_high);
+  const double boundary_clearance =
+      std::min(std::min((start - map_low).minCoeff(),
+                        (map_high - start).minCoeff()),
+               std::min((finish - map_low).minCoeff(),
+                        (map_high - finish).minCoeff()));
+  constexpr double kClearanceTolerance = 1.0e-9;
+  if (boundary_clearance + kClearanceTolerance < radius)
+  {
+    return false;
+  }
+
+  const double resolution = grid_map->getResolution();
+  const Eigen::Vector3d half_extent =
+      Eigen::Vector3d::Constant(0.5 * resolution);
+  // A segment point can be half a voxel diagonal from the centre of the
+  // traversed ray cell, and the tested obstacle AABB contributes another
+  // half diagonal.  This neighbourhood therefore covers every voxel whose
+  // box can be within radius of the continuous segment.
+  const int neighbour_cells = std::max(
+      1, static_cast<int>(std::ceil(
+             (radius + std::sqrt(3.0) * resolution) / resolution)));
+  const auto neighbourhood_is_clear =
+      [&](const Eigen::Vector3i &base_index) {
+        for (int dx = -neighbour_cells; dx <= neighbour_cells; ++dx)
+        {
+          for (int dy = -neighbour_cells; dy <= neighbour_cells; ++dy)
+          {
+            for (int dz = -neighbour_cells; dz <= neighbour_cells; ++dz)
+            {
+              const Eigen::Vector3i index =
+                  base_index + Eigen::Vector3i(dx, dy, dz);
+              const Eigen::Vector3d voxel_center =
+                  (index.cast<double>().array() + 0.5).matrix() *
+                  resolution;
+              if (!grid_map->isInInflatedMap(voxel_center) ||
+                  grid_map->getInflateOccupancy(voxel_center) == 0)
+              {
+                continue;
+              }
+              const double distance_squared =
+                  segmentAabbDistanceSquared(start, finish, voxel_center,
+                                             half_extent);
+              if (!std::isfinite(distance_squared) ||
+                  distance_squared + kClearanceTolerance <
+                      radius * radius)
+              {
+                return false;
+              }
+            }
+          }
+        }
+        return true;
+      };
+
+  const Eigen::Vector3i start_index =
+      (start / resolution).array().floor().cast<int>();
+  const Eigen::Vector3i finish_index =
+      (finish / resolution).array().floor().cast<int>();
+  if (!neighbourhood_is_clear(start_index) ||
+      (finish_index != start_index &&
+       !neighbourhood_is_clear(finish_index)))
+  {
+    return false;
+  }
+
+  RayCaster raycaster;
+  Eigen::Vector3d voxel;
+  if (raycaster.setInput(start / resolution, finish / resolution))
+  {
+    while (raycaster.step(voxel))
+    {
+      const Eigen::Vector3i index =
+          voxel.array().floor().cast<int>();
+      if (!neighbourhood_is_clear(index))
+      {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
 // Conservative distance from a point to the rolling-map boundary or to the
 // nearest inflated occupied voxel AABB. This refines MINCO junction locations
 // after A*; it does not alter the A* graph, costs, or returned raw path.
@@ -151,8 +368,10 @@ double pointInflatedClearance(const GridMap::Ptr &grid_map,
 }
 
 // Relocate only the internal bends of the simplified path. Candidate bends are
-// searched by increasing displacement, must retain the requested clearance,
-// and must keep both adjacent seed segments collision-free.
+// searched by increasing displacement and must keep both adjacent radius-r
+// seed capsules clear of occupied voxel AABBs. This is the seed-containment
+// precondition used by Liu-style ellipsoid decomposition and FIRI-style
+// restrictive inflation; it is deliberately a post-A* corridor operation.
 bool refineSimplifiedJunctions(
     const GridMap::Ptr &grid_map,
     ego_planner::tf_sfc::PointVector &path,
@@ -219,6 +438,15 @@ bool refineSimplifiedJunctions(
               SegmentState::FREE ||
           segmentState(grid_map, candidate, path[point_id + 1]) !=
               SegmentState::FREE)
+      {
+        continue;
+      }
+      if (!segmentHasInflatedClearance(
+              grid_map, path[point_id - 1], candidate,
+              required_clearance) ||
+          !segmentHasInflatedClearance(
+              grid_map, candidate, path[point_id + 1],
+              required_clearance))
       {
         continue;
       }
@@ -714,6 +942,18 @@ bool buildFixedPieceSeedPath(const GridMap::Ptr &grid_map,
           ego_planner::tf_sfc::FailureReason::NONE)
       {
         edge_failure_reason = segmentFailureReason(edge_state);
+      }
+    }
+    else if (!segmentHasInflatedClearance(
+                 grid_map, seed_path[point_id - 1], seed_path[point_id],
+                 std::max(min_junction_clearance, 0.0)))
+    {
+      seed_edges_valid = false;
+      if (edge_failure_reason ==
+          ego_planner::tf_sfc::FailureReason::NONE)
+      {
+        edge_failure_reason =
+            ego_planner::tf_sfc::FailureReason::OVERLAP_TOO_SMALL;
       }
     }
   }
