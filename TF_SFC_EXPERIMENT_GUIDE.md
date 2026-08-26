@@ -79,7 +79,7 @@ roslaunch ego_planner single_drone_interactive.launch \
   tf_sfc_hard_corridor_parameterization:=true \
   tf_sfc_min_valid_pieces:=1 \
   tf_sfc_safety_margin:=0.10 \
-  tf_sfc_min_overlap_radius:=0.08 \
+  tf_sfc_min_overlap_radius:=0.02 \
   tf_sfc_use_projection:=true \
   tf_sfc_use_soft_penalty:=true \
   tf_sfc_experiment_tag:=pca_obb_hard_junction_v9
@@ -167,7 +167,7 @@ roslaunch ego_planner single_drone_interactive.launch \
   tf_sfc_max_faces:=12 \
   tf_sfc_max_obs_faces:=6 \
   tf_sfc_safety_margin:=0.10 \
-  tf_sfc_min_overlap_radius:=0.08 \
+  tf_sfc_min_overlap_radius:=0.02 \
   tf_sfc_interior_sample_margin:=0.0 \
   tf_sfc_allow_partial_corridors:=true \
   tf_sfc_min_valid_pieces:=2 \
@@ -201,6 +201,14 @@ v12.1 的 `overlap_too_small` 若伴随 `seed_path_point_count=0`，表示 raw A
 若 seed 已显示 `_overlap_local_refined`、`seed_path_edge_valid=1`，但第 0 段成功而第 1 段出现内部采样点 `obstacle_separation_failure`，说明高阶初始 MINCO 曲线在折点之间过冲。v12.3 中 OBB 与 TF-SFC 改为围绕已连续验碰的直线 seed segment 生成走廊；初始 MINCO piece 只提供方向提示。优化后的曲线仍需要通过硬接头参数化、段内代价、碰撞复检和最终走廊门限。
 
 本轮使用独立标签 `proposed_pca_f12_v12_3_line_seed`。若至少两个连续走廊有效，在线 certified-prefix 配置会进入优化器；未覆盖尾段仍按 `outside_local_map` 或 `piece_budget_tail` 记录。
+
+### v12.4：连续线段分离与 overlap 硬阈值
+
+v12.3 已证明安全折线有效且第 0 段稳定生成，但第 1 段仍被切面拒绝。v12.4 将障碍切面法向从“障碍到最近离散采样点”改为“障碍到连续 seed 线段最近点”，并在连续最近点法向及各采样点候选法向中选择认证分离间隙最大的平面。
+
+同时修正 overlap 参数语义：对一个凸走廊，如果两端都包含半径 `r` 的球，则走廊必然包含两球的凸包，即沿整段的半径 `r` 胶囊。此前 `0.08 m` 因而不是单纯接头条件，而是额外的整段厚管道条件。主实验的硬 full-dimensional overlap 接受下限改为 `0.02 m`（当前 0.1 m 栅格的 0.2 cell）；实际 overlap radius 继续作为质量指标报告。
+
+`0.08 m` 可作为严格 overlap/clearance 消融，但不能把其不可行样本直接解释为 TF-SFC 几何算法失败。主实验命令使用 `tf_sfc_min_overlap_radius:=0.02`。
 
 ### 自定义日志目录
 
