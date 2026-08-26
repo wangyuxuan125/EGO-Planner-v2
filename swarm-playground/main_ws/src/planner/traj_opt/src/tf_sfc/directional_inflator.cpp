@@ -581,14 +581,6 @@ DirectionalInflator::buildFaceBoundedCandidate(
         }
       }
     }
-    if (nearest_sample_id >= 0)
-    {
-      const double distance_m = std::sqrt(nearest_distance);
-      min_obstacle_sample_distance_m =
-          std::isfinite(min_obstacle_sample_distance_m)
-              ? std::min(min_obstacle_sample_distance_m, distance_m)
-              : distance_m;
-    }
     if (nearest_sample_id < 0 || nearest_distance <= 1.0e-12)
     {
       separation_failure_sample_id = nearest_sample_id;
@@ -630,6 +622,8 @@ DirectionalInflator::buildFaceBoundedCandidate(
 
     const Eigen::Vector3d voxel_half_extent =
         Eigen::Vector3d::Constant(0.5 * map_resolution);
+    double nearest_voxel_distance_squared =
+        std::numeric_limits<double>::infinity();
     if (samples.size() == 1)
     {
       Eigen::Vector3d closest_seed;
@@ -638,6 +632,8 @@ DirectionalInflator::buildFaceBoundedCandidate(
                              voxel_half_extent, closest_seed,
                              closest_voxel))
       {
+        nearest_voxel_distance_squared =
+            (closest_voxel - closest_seed).squaredNorm();
         append_normal_candidate(closest_voxel - closest_seed);
       }
     }
@@ -653,9 +649,21 @@ DirectionalInflator::buildFaceBoundedCandidate(
                                voxel_half_extent, closest_seed,
                                closest_voxel))
         {
+          nearest_voxel_distance_squared = std::min(
+              nearest_voxel_distance_squared,
+              (closest_voxel - closest_seed).squaredNorm());
           append_normal_candidate(closest_voxel - closest_seed);
         }
       }
+    }
+    if (std::isfinite(nearest_voxel_distance_squared))
+    {
+      const double distance_m =
+          std::sqrt(std::max(nearest_voxel_distance_squared, 0.0));
+      min_obstacle_sample_distance_m =
+          std::isfinite(min_obstacle_sample_distance_m)
+              ? std::min(min_obstacle_sample_distance_m, distance_m)
+              : distance_m;
     }
 
     Eigen::Vector3d normal = Eigen::Vector3d::Zero();
