@@ -26,6 +26,10 @@ struct ExperimentRunRecord
   int retry_index = 0;
   int attempt_id = 0;
   bool touch_goal = false;
+  bool commanded_goal_valid = false;
+  double commanded_goal_x_m = 0.0;
+  double commanded_goal_y_m = 0.0;
+  double commanded_goal_z_m = 0.0;
   double planning_start_x_m = 0.0;
   double planning_start_y_m = 0.0;
   double planning_start_z_m = 0.0;
