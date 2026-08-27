@@ -184,6 +184,7 @@ bool DirectionalInflator::inflate(const PointVector &samples,
   int accepted_separation_failure_sample_id = -1;
   bool accepted_separation_failure_at_endpoint = false;
   FailureReason initial_failure = FailureReason::NONE;
+  int candidate_evaluation_count = 1;
   const SpaceState initial_state = buildFaceBoundedCandidate(
       samples, anchor, directions.frame, lower, upper, map_resolution,
       is_occupied, accepted_hpoly, accepted_obstacle_faces,
@@ -195,6 +196,8 @@ bool DirectionalInflator::inflate(const PointVector &samples,
   {
     corridor.metrics.obstacle_face_count = accepted_obstacle_faces;
     corridor.metrics.obstacle_point_count = accepted_obstacle_points;
+    corridor.metrics.inflation_candidate_evaluation_count =
+        candidate_evaluation_count;
     corridor.metrics.face_budget_saturated = accepted_budget_saturated;
     corridor.metrics.min_obstacle_sample_distance_m =
         accepted_min_obstacle_sample_distance_m;
@@ -218,23 +221,45 @@ bool DirectionalInflator::inflate(const PointVector &samples,
             });
 
   const double step = std::max(parameters_.inflation_step, map_resolution);
+  const int max_expansion_steps = static_cast<int>(std::floor(
+      (parameters_.max_inflation_distance + 1.0e-9) / step));
   for (const int axis : axis_order)
   {
     for (int side = 0; side < 2; ++side)
     {
-      double expanded = 0.0;
-      while (expanded + step <=
-             parameters_.max_inflation_distance + 1.0e-9)
+      if (max_expansion_steps <= 0)
       {
-        Eigen::Vector3d candidate_lower = lower;
-        Eigen::Vector3d candidate_upper = upper;
+        continue;
+      }
+
+      const Eigen::Vector3d base_lower = lower;
+      const Eigen::Vector3d base_upper = upper;
+      int best_steps = 0;
+      Eigen::Vector3d best_lower = lower;
+      Eigen::Vector3d best_upper = upper;
+      HPoly best_hpoly;
+      int best_obstacle_faces = accepted_obstacle_faces;
+      int best_obstacle_points = accepted_obstacle_points;
+      bool best_budget_saturated = accepted_budget_saturated;
+      double best_min_obstacle_sample_distance_m =
+          accepted_min_obstacle_sample_distance_m;
+      int best_separation_failure_sample_id =
+          accepted_separation_failure_sample_id;
+      bool best_separation_failure_at_endpoint =
+          accepted_separation_failure_at_endpoint;
+
+      const auto evaluateExpansion = [&](const int expansion_steps) {
+        Eigen::Vector3d candidate_lower = base_lower;
+        Eigen::Vector3d candidate_upper = base_upper;
+        const double expansion =
+            static_cast<double>(expansion_steps) * step;
         if (side == 0)
         {
-          candidate_lower(axis) -= step;
+          candidate_lower(axis) -= expansion;
         }
         else
         {
-          candidate_upper(axis) += step;
+          candidate_upper(axis) += expansion;
         }
 
         HPoly candidate_hpoly;
@@ -246,6 +271,7 @@ bool DirectionalInflator::inflate(const PointVector &samples,
         int candidate_separation_failure_sample_id = -1;
         bool candidate_separation_failure_at_endpoint = false;
         FailureReason candidate_failure = FailureReason::NONE;
+        ++candidate_evaluation_count;
         const SpaceState candidate_state = buildFaceBoundedCandidate(
             samples, anchor, directions.frame, candidate_lower,
             candidate_upper, map_resolution, is_occupied, candidate_hpoly,
@@ -257,22 +283,63 @@ bool DirectionalInflator::inflate(const PointVector &samples,
             candidate_failure);
         if (candidate_state != SpaceState::FREE)
         {
-          break;
+          return false;
         }
 
-        lower = candidate_lower;
-        upper = candidate_upper;
-        accepted_hpoly = candidate_hpoly;
-        accepted_obstacle_faces = candidate_obstacle_faces;
-        accepted_obstacle_points = candidate_obstacle_points;
-        accepted_budget_saturated = candidate_budget_saturated;
-        accepted_min_obstacle_sample_distance_m =
+        best_steps = expansion_steps;
+        best_lower = candidate_lower;
+        best_upper = candidate_upper;
+        best_hpoly = candidate_hpoly;
+        best_obstacle_faces = candidate_obstacle_faces;
+        best_obstacle_points = candidate_obstacle_points;
+        best_budget_saturated = candidate_budget_saturated;
+        best_min_obstacle_sample_distance_m =
             candidate_min_obstacle_sample_distance_m;
-        accepted_separation_failure_sample_id =
+        best_separation_failure_sample_id =
             candidate_separation_failure_sample_id;
-        accepted_separation_failure_at_endpoint =
+        best_separation_failure_at_endpoint =
             candidate_separation_failure_at_endpoint;
-        expanded += step;
+        return true;
+      };
+
+      // Search the same discrete inflation grid as the former step-by-step
+      // loop.  Candidate feasibility is monotone with expansion: a larger OBB
+      // contains every voxel of a smaller one.  Trying the limit first and
+      // then bisecting a failing range removes repeated scans and obstacle
+      // sorts while retaining the largest feasible discrete expansion.
+      if (!evaluateExpansion(max_expansion_steps))
+      {
+        int feasible_steps = 0;
+        int infeasible_steps = max_expansion_steps;
+        while (infeasible_steps - feasible_steps > 1)
+        {
+          const int trial_steps =
+              feasible_steps + (infeasible_steps - feasible_steps) / 2;
+          if (evaluateExpansion(trial_steps))
+          {
+            feasible_steps = trial_steps;
+          }
+          else
+          {
+            infeasible_steps = trial_steps;
+          }
+        }
+      }
+
+      if (best_steps > 0)
+      {
+        lower = best_lower;
+        upper = best_upper;
+        accepted_hpoly = best_hpoly;
+        accepted_obstacle_faces = best_obstacle_faces;
+        accepted_obstacle_points = best_obstacle_points;
+        accepted_budget_saturated = best_budget_saturated;
+        accepted_min_obstacle_sample_distance_m =
+            best_min_obstacle_sample_distance_m;
+        accepted_separation_failure_sample_id =
+            best_separation_failure_sample_id;
+        accepted_separation_failure_at_endpoint =
+            best_separation_failure_at_endpoint;
       }
     }
   }
@@ -284,6 +351,8 @@ bool DirectionalInflator::inflate(const PointVector &samples,
   corridor.metrics.face_count = corridor.hpoly.rows();
   corridor.metrics.obstacle_face_count = accepted_obstacle_faces;
   corridor.metrics.obstacle_point_count = accepted_obstacle_points;
+  corridor.metrics.inflation_candidate_evaluation_count =
+      candidate_evaluation_count;
   corridor.metrics.face_budget_saturated = accepted_budget_saturated;
   corridor.metrics.min_obstacle_sample_distance_m =
       accepted_min_obstacle_sample_distance_m;
