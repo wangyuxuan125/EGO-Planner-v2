@@ -107,6 +107,9 @@ struct Parameters
   bool enforce_final_corridor = true;
   bool hard_corridor_parameterization = true;
   bool decomp_retry_seed_validation_without_velocity = true;
+  // Shared by TF-SFC and EllipsoidDecomp: if a velocity-prefixed seed fails
+  // clearance/corner certification, rebuild it once with ordinary A*.
+  bool seed_retry_without_velocity_on_clearance_failure = true;
   bool visualization_enabled = true;
   bool log_enabled = true;
   std::string visualization_frame = "world";
