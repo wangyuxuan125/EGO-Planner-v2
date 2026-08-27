@@ -103,7 +103,7 @@ roslaunch ego_planner single_drone_interactive.launch \
 
 方向模式为 `0=Frenet`、`1=PCA`、`2=Sensitivity Gramian`。当前分支尚未从完整 MINCO 局部目标自动构造各向异性的 per-piece Gramian；仅使用 jerk 二次型会在 xyz 上得到各向同性度量，不能冒充 trajectory-favorable sensitivity。PCA/Frenet 因此只能作为消融项。
 
-正式 sensitivity 实验必须同时设置 `tf_sfc_direction_mode:=2 tf_sfc_allow_direction_fallback:=false`。在真实 Gramian 接入前，该配置应以 `direction_failure` 明确失败；若为了工程调试允许回退，则 v17 CSV 的 `used_direction_mode`、`direction_fallback_allowed`、`direction_fallback_count` 和 corridor 级 requested/used mode 会暴露该回退，数据不得计入主方法。
+正式 sensitivity 实验必须同时设置 `tf_sfc_direction_mode:=2 tf_sfc_allow_direction_fallback:=false`。在真实 Gramian 接入前，该配置应以 `direction_failure` 明确失败；若为了工程调试允许回退，则 v18 CSV 的 `used_direction_mode`、`direction_fallback_allowed`、`direction_fallback_count` 和 corridor 级 requested/used mode 会暴露该回退，数据不得计入主方法。
 
 ### EGO + Liu et al. EllipsoidDecomp SFC
 
@@ -260,14 +260,14 @@ rostopic echo -n 1 /drone_0_ego_planner_node/tf_sfc/polyhedron_array
 默认输出：
 
 ```text
-$HOME/tf_sfc_results/ego/ego_runs_v17_drone_0.csv
-$HOME/tf_sfc_results/ego/ego_corridors_v17_drone_0.csv
+$HOME/tf_sfc_results/ego/ego_runs_v18_drone_0.csv
+$HOME/tf_sfc_results/ego/ego_corridors_v18_drone_0.csv
 ```
 
-- `ego_runs_v17_drone_<id>.csv`：每次优化候选调用一行。`planning_event_id` 标识一次重规划事件，`retry_index` 表示同一目标下连续失败后的重试序号，`attempt_id` 只表示多拓扑候选，三者不能混用。全局输入由 `commanded_goal_{x,y,z}_m` 记录，每次滚动规划实际使用的局部目标由 `planning_target_{x,y,z}_m` 记录；目标对比必须以前者分组。
-- 搜索阶段单独记录 `astar_search_attempted/success/call_count/ms`、原始 A* 路径点数/长度、最终 seed 点数/长度、连续边有效性和局部地图覆盖率。v17 另以 `seed_frontend_evaluated`、`seed_frontend_success` 和 `corridor_generation_attempted` 区分前端失败与真正的 corridor 构造失败。`seed_path_build_ms` 包含搜索、视线简化和 piece 对齐；`corridor_inflation_ms` 单独记录区域生成调用；两者仍包含在 `corridor_generation_ms` 和 `total_planning_ms` 内。
-- v17 将启动期的局部地图问题进一步拆开：`allow_partial_corridors` 记录实际生效参数，`seed_start_in_map`/`seed_finish_in_map` 记录端点状态，`partial_target_search_attempted/found`、`partial_boundary_ratio` 和六个 `inflated_map_{low,high}_*` 字段记录滚动地图可用范围。若策略为 `partial_corridors_disabled`，修正启动参数；若为 `inflated_map_forward_extent_not_ready`，该样本属于传感器/地图预热失败，不得记作 PCA 或 corridor 几何失败。
-- `ego_corridors_v17_drone_<id>.csv`：每个轨迹分段一行，并记录 `inflation_candidate_evaluation_count`、`requested_direction_mode` 与 `used_direction_mode`。Run 表中的 `direct_spatial_variable_count`、`hard_spatial_variable_count`、`hard_spatial_variable_overhead_ratio` 和 `face_sample_pairs_per_evaluation` 用于核验“降低约束负担”的声明；若 ratio 大于 1，不得声称参数维数下降。EllipsoidDecomp 额外记录种子包含是否被评估、是否完整包含线段以及最大归一化半空间违反量。由于多面体是凸集，只要两个端点位于多面体内，整条线 seed 就位于多面体内。
+- `ego_runs_v18_drone_<id>.csv`：每次优化候选调用一行。`planning_event_id` 标识一次重规划事件，`retry_index` 表示同一目标下连续失败后的重试序号，`attempt_id` 只表示多拓扑候选，三者不能混用。全局输入由 `commanded_goal_{x,y,z}_m` 记录，每次滚动规划实际使用的局部目标由 `planning_target_{x,y,z}_m` 记录；目标对比必须以前者分组。
+- 搜索阶段单独记录 `astar_search_attempted/success/call_count/ms`、原始 A* 路径点数/长度、最终 seed 点数/长度、连续边有效性和局部地图覆盖率。v18 另以 `seed_frontend_evaluated`、`seed_frontend_success` 和 `corridor_generation_attempted` 区分前端失败与真正的 corridor 构造失败。`seed_path_build_ms` 包含搜索、视线简化和 piece 对齐；`corridor_inflation_ms` 单独记录区域生成调用；两者仍包含在 `corridor_generation_ms` 和 `total_planning_ms` 内。
+- v18 将启动期的局部地图问题进一步拆开：`allow_partial_corridors` 记录实际生效参数，`seed_start_in_map`/`seed_finish_in_map` 记录端点状态，`partial_target_search_attempted/found`、`partial_boundary_ratio` 和六个 `inflated_map_{low,high}_*` 字段记录滚动地图可用范围。若策略为 `partial_corridors_disabled`，修正启动参数；若为 `inflated_map_forward_extent_not_ready`，该样本属于传感器/地图预热失败，不得记作 PCA 或 corridor 几何失败。
+- `ego_corridors_v18_drone_<id>.csv`：每个轨迹分段一行，并记录 `inflation_candidate_evaluation_count`、`requested_direction_mode` 与 `used_direction_mode`。Run 表中的 `direct_spatial_variable_count`、`hard_spatial_variable_count`、`hard_spatial_variable_overhead_ratio` 和 `face_sample_pairs_per_evaluation` 用于核验“降低约束负担”的声明；若 ratio 大于 1，不得声称参数维数下降。EllipsoidDecomp 额外记录种子包含是否被评估、是否完整包含线段以及最大归一化半空间违反量。由于多面体是凸集，只要两个端点位于多面体内，整条线 seed 就位于多面体内。
 - 最终安全失败继续拆分为 `obstacle_collision_failure`、`swarm_clearance_failure` 和走廊违反；硬连接点与采样曲线违反量保持独立。
 
 文件使用追加模式。不要在同一标签下混入不同地图或参数；每个场景应使用独立目录或唯一 `tf_sfc_experiment_tag`。
@@ -275,8 +275,8 @@ $HOME/tf_sfc_results/ego/ego_corridors_v17_drone_0.csv
 快速查看：
 
 ```bash
-head -n 5 $HOME/tf_sfc_results/ego/ego_runs_v17_drone_0.csv
-head -n 5 $HOME/tf_sfc_results/ego/ego_corridors_v17_drone_0.csv
+head -n 5 $HOME/tf_sfc_results/ego/ego_runs_v18_drone_0.csv
+head -n 5 $HOME/tf_sfc_results/ego/ego_corridors_v18_drone_0.csv
 ```
 
 ## 4. 当前可用于论文统计的字段
@@ -296,7 +296,7 @@ head -n 5 $HOME/tf_sfc_results/ego/ego_corridors_v17_drone_0.csv
 
 ```bash
 python3 tools/analyze_tf_sfc_v9.py \
-  $HOME/tf_sfc_results/ego/ego_runs_v17_drone_0.csv
+  $HOME/tf_sfc_results/ego/ego_runs_v18_drone_0.csv
 ```
 
 输出中的 `optimizer-call success` 仅为诊断项；论文主表应优先使用独立场景/目标上的系统结果、固定 seed 输入的走廊结果，以及有效走廊条件下的后端结果。工具给出的 “goals with >=1 successful plan” 也不是目标到达率。
@@ -385,9 +385,9 @@ tf_sfc_experiment_tag:=proposed_pca_f12_v12_6_segment_voxel_support
 仍以四项 G0 条件作为通过标准。确定性失败时只保留 5–10 次重试。
 
 
-## 10. v17：共享 seed-clearance 重建
+## 10. v18：共享 seed-clearance 重建
 
-v16 数据显示，部分滚动重规划并非走廊膨胀失败，而是带初速度前缀的 seed 在 junction clearance / corner repair 认证阶段失败。v17 只对这一种情况执行一次普通 A* 重建：
+v16 数据显示，部分滚动重规划并非走廊膨胀失败，而是带初速度前缀的 seed 在 junction clearance / corner repair 认证阶段失败。v18 只对这一种情况执行一次普通 A* 重建：
 
 - 仅当首次失败为 `seed_clearance_failure` 且首次 seed 实际采用了速度对齐前缀时触发；
 - 重建保持相同地图、起点、目标、piece 预算、边验证和 A* 代价，仅将初速度前缀长度置零；
@@ -406,14 +406,54 @@ roslaunch ego_planner single_drone_interactive.launch \
   tf_sfc_allow_ego_fallback:=false \
   tf_sfc_hard_corridor_parameterization:=true \
   tf_sfc_seed_retry_without_velocity_on_clearance_failure:=true \
-  tf_sfc_experiment_tag:=pca_tf_sfc_v17
+  tf_sfc_experiment_tag:=pca_tf_sfc_v18
 ```
 
 公平性消融仅改变一个开关：
 
 ```bash
 tf_sfc_seed_retry_without_velocity_on_clearance_failure:=false \
-tf_sfc_experiment_tag:=pca_tf_sfc_v17_no_clearance_retry
+tf_sfc_experiment_tag:=pca_tf_sfc_v18_no_clearance_retry
 ```
 
-v17 run 表新增 `clearance_retry_attempted`、`clearance_retry_success`、`clearance_retry_initial_strategy` 和 `clearance_retry_first_failure_point_id`。统计时应同时报告触发率、条件成功率和附加搜索耗时，不能把重试隐藏为 corridor 生成改进。该修正只提高共享 seed 前端的鲁棒性；它不构成 MINCO sensitivity 方向或固定三维走廊参数化的实现。
+v18 run 表新增 `clearance_retry_attempted`、`clearance_retry_success`、`clearance_retry_initial_strategy` 和 `clearance_retry_first_failure_point_id`。统计时应同时报告触发率、条件成功率和附加搜索耗时，不能把重试隐藏为 corridor 生成改进。该修正只提高共享 seed 前端的鲁棒性；它不构成 MINCO sensitivity 方向或固定三维走廊参数化的实现。
+
+
+## 11. v18：共享 clearance-aware A* 回退
+
+困难目标 `(15.04, -0.05, 1.0)` 的固定 seed-42 对照中，原始 EGO 到达目标，而 TF-SFC 与 Liu/EllipsoidDecomp 均在普通占据 A* 返回后、同一个 raw seed 边的净空认证处失败。将局部修复半径从 0.5 m 增至 1.5 m 仍未改变失败点，并把 seed 构造中位时间推高到约 172 ms。因此 v18 不再依赖扩大局部 BFS，而是在首次 `seed_clearance_failure` 后执行一次共享的 clearance-aware 全局 A*：
+
+- 原始 EGO 的所有 A* 调用保持默认行为；
+- TF-SFC 与 Liu 共用同一边认证器、`min_overlap_radius`、地图、目标和 piece 预算；
+- 普通 A* 成功时不触发额外搜索；
+- clearance A* 的每条候选边必须通过连续占据检查和 radius-capsule 净空认证；
+- 搜索受独立超时限制，耗时完整计入 seed、corridor 和 total planning 时间；
+- 关闭 `seed_clearance_astar_enabled` 可恢复 v17 普通 A* 前端消融。
+
+困难目标的 TF-SFC 主测试：
+
+```bash
+roslaunch ego_planner single_drone_interactive.launch \
+  map_seed:=42 \
+  tf_sfc_enabled:=true \
+  tf_sfc_corridor_method:=tf_sfc \
+  tf_sfc_direction_mode:=1 \
+  tf_sfc_allow_partial_corridors:=true \
+  tf_sfc_allow_ego_fallback:=false \
+  tf_sfc_hard_corridor_parameterization:=true \
+  tf_sfc_min_overlap_radius:=0.02 \
+  tf_sfc_junction_refine_radius:=0.50 \
+  tf_sfc_seed_retry_without_velocity_on_clearance_failure:=true \
+  tf_sfc_seed_clearance_astar_enabled:=true \
+  tf_sfc_seed_clearance_astar_time_limit:=0.20 \
+  tf_sfc_experiment_tag:=pca_tf_sfc_v18_clearance_astar
+```
+
+Liu 使用完全相同的前端设置，只改变 corridor 方法和标签：
+
+```bash
+tf_sfc_corridor_method:=ellipsoid_decomp \
+tf_sfc_experiment_tag:=liu_v18_clearance_astar
+```
+
+v18 run 表新增 `clearance_astar_attempted`、`clearance_astar_success`、`clearance_astar_call_count` 和 `clearance_astar_ms`，并修复成功记录未复制 v17 clearance-retry provenance 的问题。正式统计应把 occupancy-A* 与 clearance-A* 作为前端消融，同时只在共享 seed 成功的条件下比较 Liu 与 TF-SFC 的 corridor geometry。
