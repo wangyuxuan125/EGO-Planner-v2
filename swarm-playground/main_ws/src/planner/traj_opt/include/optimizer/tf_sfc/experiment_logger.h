@@ -45,6 +45,10 @@ struct ExperimentRunRecord
   bool clearance_retry_success = false;
   std::string clearance_retry_initial_strategy = "none";
   int clearance_retry_first_failure_point_id = -1;
+  bool clearance_astar_attempted = false;
+  bool clearance_astar_success = false;
+  int clearance_astar_call_count = 0;
+  double clearance_astar_ms = 0.0;
   int seed_validation_failure_point_id = -1;
   bool astar_search_attempted = false;
   bool astar_search_success = false;
