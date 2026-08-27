@@ -41,6 +41,10 @@ struct ExperimentRunRecord
   bool initial_velocity_seed_used = false;
   bool velocity_seed_fallback_used = false;
   std::string velocity_seed_fallback_reason = "none";
+  bool clearance_retry_attempted = false;
+  bool clearance_retry_success = false;
+  std::string clearance_retry_initial_strategy = "none";
+  int clearance_retry_first_failure_point_id = -1;
   int seed_validation_failure_point_id = -1;
   bool astar_search_attempted = false;
   bool astar_search_success = false;
