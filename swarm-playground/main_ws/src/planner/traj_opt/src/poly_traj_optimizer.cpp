@@ -735,6 +735,13 @@ struct SeedPathBuildInfo
   double seed_path_length_m = 0.0;
   bool seed_path_edge_valid = false;
   double seed_path_coverage_ratio = 0.0;
+  bool seed_start_in_map = false;
+  bool seed_finish_in_map = false;
+  bool partial_target_search_attempted = false;
+  bool partial_target_found = false;
+  double partial_boundary_ratio = 0.0;
+  Eigen::Vector3d inflated_map_low = Eigen::Vector3d::Zero();
+  Eigen::Vector3d inflated_map_high = Eigen::Vector3d::Zero();
   double seed_path_build_ms = 0.0;
 };
 
@@ -787,8 +794,11 @@ bool buildFixedPieceSeedPath(const GridMap::Ptr &grid_map,
     return false;
   }
 
-  if (!grid_map->isInInflatedMap(start))
+  build_info.strategy = "start_map_validation";
+  build_info.seed_start_in_map = grid_map->isInInflatedMap(start);
+  if (!build_info.seed_start_in_map)
   {
+    build_info.strategy = "start_outside_inflated_map";
     failure_reason = ego_planner::tf_sfc::FailureReason::SEED_PATH_OUTSIDE_MAP;
     return false;
   }
@@ -799,20 +809,27 @@ bool buildFixedPieceSeedPath(const GridMap::Ptr &grid_map,
   }
 
   Eigen::Vector3d seed_finish = finish;
-  bool full_coverage = grid_map->isInInflatedMap(finish) &&
+  build_info.seed_finish_in_map = grid_map->isInInflatedMap(finish);
+  bool full_coverage = build_info.seed_finish_in_map &&
                        grid_map->getInflateOccupancy(finish) == 0;
   double coverage_ratio = 1.0;
   if (!full_coverage)
   {
     uncovered_failure_reason = ego_planner::tf_sfc::FailureReason::OUTSIDE_LOCAL_MAP;
+    build_info.partial_target_search_attempted = true;
+    build_info.strategy = "partial_target_backoff";
+    grid_map->getInflatedMapBounds(build_info.inflated_map_low,
+                                   build_info.inflated_map_high);
+    const Eigen::Vector3d &map_low = build_info.inflated_map_low;
+    const Eigen::Vector3d &map_high = build_info.inflated_map_high;
     if (!allow_partial_corridors || piece_num <= 1)
     {
+      build_info.strategy =
+          allow_partial_corridors ? "partial_piece_budget_unavailable"
+                                  : "partial_corridors_disabled";
       failure_reason = ego_planner::tf_sfc::FailureReason::OUTSIDE_LOCAL_MAP;
       return false;
     }
-
-    Eigen::Vector3d map_low, map_high;
-    grid_map->getInflatedMapBounds(map_low, map_high);
     const Eigen::Vector3d delta = finish - start;
     const double distance = delta.norm();
     if (distance <= 2.0 * grid_map->getResolution())
@@ -836,6 +853,7 @@ bool buildFixedPieceSeedPath(const GridMap::Ptr &grid_map,
       }
     }
     const double ratio_step = grid_map->getResolution() / distance;
+    build_info.partial_boundary_ratio = boundary_ratio;
     coverage_ratio = std::min(1.0, boundary_ratio) - 1.5 * ratio_step;
     bool found_free_target = false;
     for (; coverage_ratio > ratio_step; coverage_ratio -= ratio_step)
@@ -848,8 +866,13 @@ bool buildFixedPieceSeedPath(const GridMap::Ptr &grid_map,
         break;
       }
     }
+    build_info.partial_target_found = found_free_target;
     if (!found_free_target)
     {
+      build_info.strategy =
+          boundary_ratio <= ratio_step
+              ? "inflated_map_forward_extent_not_ready"
+              : "partial_target_backoff_failed";
       failure_reason = ego_planner::tf_sfc::FailureReason::OUTSIDE_LOCAL_MAP;
       return false;
     }
@@ -1356,6 +1379,30 @@ namespace ego_planner
               seed_path_build_info.seed_path_edge_valid;
           record.seed_path_coverage_ratio =
               seed_path_build_info.seed_path_coverage_ratio;
+          record.allow_partial_corridors =
+              tf_sfc_parameters_.allow_partial_corridors;
+          record.seed_start_in_map =
+              seed_path_build_info.seed_start_in_map;
+          record.seed_finish_in_map =
+              seed_path_build_info.seed_finish_in_map;
+          record.partial_target_search_attempted =
+              seed_path_build_info.partial_target_search_attempted;
+          record.partial_target_found =
+              seed_path_build_info.partial_target_found;
+          record.partial_boundary_ratio =
+              seed_path_build_info.partial_boundary_ratio;
+          record.inflated_map_low_x_m =
+              seed_path_build_info.inflated_map_low.x();
+          record.inflated_map_low_y_m =
+              seed_path_build_info.inflated_map_low.y();
+          record.inflated_map_low_z_m =
+              seed_path_build_info.inflated_map_low.z();
+          record.inflated_map_high_x_m =
+              seed_path_build_info.inflated_map_high.x();
+          record.inflated_map_high_y_m =
+              seed_path_build_info.inflated_map_high.y();
+          record.inflated_map_high_z_m =
+              seed_path_build_info.inflated_map_high.z();
           record.seed_path_build_ms =
               seed_path_build_info.seed_path_build_ms;
           record.corridor_inflation_ms = tf_sfc_inflation_ms;
