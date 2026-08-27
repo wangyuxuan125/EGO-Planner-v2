@@ -1,6 +1,7 @@
 #include "optimizer/poly_traj_optimizer.h"
 
 #include <array>
+#include <queue>
 
 #ifdef TF_SFC_WITH_DECOMP_ROS
 #include <decomp_ros_msgs/PolyhedronArray.h>
@@ -307,6 +308,156 @@ bool segmentHasInflatedClearance(const GridMap::Ptr &grid_map,
   return true;
 }
 
+// Find a short, bounded 6-neighbour detour around a clearance-invalid A*
+// edge. The search is corridor-specific postprocessing: global A* output and
+// metrics remain unchanged, and every accepted local edge is capsule-certified.
+bool findClearanceLocalDetour(
+    const GridMap::Ptr &grid_map,
+    const Eigen::Vector3d &start,
+    const Eigen::Vector3d &finish,
+    const double required_clearance,
+    const double search_radius,
+    std::vector<Eigen::Vector3d> &detour)
+{
+  detour.clear();
+  if (!grid_map || search_radius <= 0.0 ||
+      !start.allFinite() || !finish.allFinite())
+  {
+    return false;
+  }
+
+  const double resolution = grid_map->getResolution();
+  const Eigen::Vector3i start_index =
+      (start / resolution).array().floor().cast<int>();
+  const Eigen::Vector3i finish_index =
+      (finish / resolution).array().floor().cast<int>();
+  if ((finish_index - start_index).squaredNorm() == 0)
+  {
+    return false;
+  }
+
+  const int search_cells = std::max(
+      1, static_cast<int>(std::ceil(search_radius / resolution)));
+  Eigen::Vector3i lower;
+  Eigen::Vector3i upper;
+  for (int axis = 0; axis < 3; ++axis)
+  {
+    lower(axis) =
+        std::min(start_index(axis), finish_index(axis)) - search_cells;
+    upper(axis) =
+        std::max(start_index(axis), finish_index(axis)) + search_cells;
+  }
+  const Eigen::Vector3i dimensions = upper - lower +
+                                     Eigen::Vector3i::Ones();
+  const int total_nodes =
+      dimensions.x() * dimensions.y() * dimensions.z();
+  if (total_nodes <= 0)
+  {
+    return false;
+  }
+
+  const auto inside = [&](const Eigen::Vector3i &index) {
+    return (index.array() >= lower.array()).all() &&
+           (index.array() <= upper.array()).all();
+  };
+  const auto linearIndex = [&](const Eigen::Vector3i &index) {
+    const Eigen::Vector3i local = index - lower;
+    return (local.z() * dimensions.y() + local.y()) *
+               dimensions.x() +
+           local.x();
+  };
+  const auto gridIndex = [&](const int linear) {
+    int remainder = linear;
+    const int x = remainder % dimensions.x();
+    remainder /= dimensions.x();
+    const int y = remainder % dimensions.y();
+    const int z = remainder / dimensions.y();
+    return lower + Eigen::Vector3i(x, y, z);
+  };
+  const auto position = [&](const Eigen::Vector3i &index) {
+    if ((index - start_index).squaredNorm() == 0)
+    {
+      return start;
+    }
+    if ((index - finish_index).squaredNorm() == 0)
+    {
+      return finish;
+    }
+    return ((index.cast<double>().array() + 0.5) * resolution)
+        .matrix();
+  };
+
+  const int start_linear = linearIndex(start_index);
+  const int finish_linear = linearIndex(finish_index);
+  std::vector<int> parent(total_nodes, -2);
+  std::queue<int> frontier;
+  parent[start_linear] = -1;
+  frontier.push(start_linear);
+  const std::array<Eigen::Vector3i, 6> steps{{
+      Eigen::Vector3i(1, 0, 0), Eigen::Vector3i(-1, 0, 0),
+      Eigen::Vector3i(0, 1, 0), Eigen::Vector3i(0, -1, 0),
+      Eigen::Vector3i(0, 0, 1), Eigen::Vector3i(0, 0, -1)}};
+
+  while (!frontier.empty())
+  {
+    const int current_linear = frontier.front();
+    frontier.pop();
+    if (current_linear == finish_linear)
+    {
+      std::vector<int> reverse_path;
+      for (int node = finish_linear; node != start_linear;
+           node = parent[node])
+      {
+        if (node < 0 || parent[node] == -2)
+        {
+          return false;
+        }
+        reverse_path.push_back(node);
+      }
+      std::reverse(reverse_path.begin(), reverse_path.end());
+      detour.reserve(reverse_path.size());
+      for (const int node : reverse_path)
+      {
+        detour.push_back(position(gridIndex(node)));
+      }
+      return !detour.empty();
+    }
+
+    const Eigen::Vector3i current_index =
+        gridIndex(current_linear);
+    const Eigen::Vector3d current_position =
+        position(current_index);
+    for (const Eigen::Vector3i &step : steps)
+    {
+      const Eigen::Vector3i neighbour_index =
+          current_index + step;
+      if (!inside(neighbour_index))
+      {
+        continue;
+      }
+      const int neighbour_linear =
+          linearIndex(neighbour_index);
+      if (parent[neighbour_linear] != -2)
+      {
+        continue;
+      }
+      const Eigen::Vector3d neighbour_position =
+          position(neighbour_index);
+      if (!grid_map->isInInflatedMap(neighbour_position) ||
+          grid_map->getInflateOccupancy(neighbour_position) != 0 ||
+          !segmentHasInflatedClearance(
+              grid_map, current_position, neighbour_position,
+              required_clearance))
+      {
+        continue;
+      }
+      parent[neighbour_linear] = current_linear;
+      frontier.push(neighbour_linear);
+    }
+  }
+  return false;
+}
+
 // Repair only clearance-invalid diagonal edges in the returned A* polyline.
 // A* remains unchanged and its raw path metrics are logged before this step.
 // For a 26-neighbour grid edge, deterministic axis-order permutations replace
@@ -316,10 +467,13 @@ bool repairRawPathCornerCuts(
     const GridMap::Ptr &grid_map,
     std::vector<Eigen::Vector3d> &raw_path,
     const double required_clearance,
+    const double local_search_radius,
     bool &repair_used,
+    bool &local_search_used,
     int &failure_point_id)
 {
   repair_used = false;
+  local_search_used = false;
   failure_point_id = -1;
   if (!grid_map || raw_path.size() < 2)
   {
@@ -379,6 +533,20 @@ bool repairRawPathCornerCuts(
     } while (std::next_permutation(axis_order.begin(),
                                    axis_order.end()));
 
+    if (!edge_repaired)
+    {
+      std::vector<Eigen::Vector3d> local_detour;
+      if (findClearanceLocalDetour(
+              grid_map, edge_start, target, required_clearance,
+              local_search_radius, local_detour))
+      {
+        repaired.insert(repaired.end(),
+                        local_detour.begin(), local_detour.end());
+        edge_repaired = true;
+        repair_used = true;
+        local_search_used = true;
+      }
+    }
     if (!edge_repaired)
     {
       failure_point_id = static_cast<int>(point_id) - 1;
@@ -885,20 +1053,27 @@ bool buildFixedPieceSeedPath(const GridMap::Ptr &grid_map,
   }
 
   bool corner_repair_used = false;
+  bool local_search_repair_used = false;
   int corner_repair_failure_point_id = -1;
   if (!repairRawPathCornerCuts(
           grid_map, raw_path,
           std::max(min_junction_clearance, 0.0),
-          corner_repair_used, corner_repair_failure_point_id))
+          std::max(junction_refine_radius, resolution),
+          corner_repair_used, local_search_repair_used,
+          corner_repair_failure_point_id))
   {
     build_info.seed_validation_failure_point_id =
         corner_repair_failure_point_id;
-    build_info.strategy += "_clearance_corner_repair_failed";
+    build_info.strategy += "_clearance_local_grid_repair_failed";
     failure_reason =
         ego_planner::tf_sfc::FailureReason::OVERLAP_TOO_SMALL;
     return false;
   }
-  if (corner_repair_used)
+  if (local_search_repair_used)
+  {
+    build_info.strategy += "_clearance_local_grid_repaired";
+  }
+  else if (corner_repair_used)
   {
     build_info.strategy += "_clearance_corner_repaired";
   }
