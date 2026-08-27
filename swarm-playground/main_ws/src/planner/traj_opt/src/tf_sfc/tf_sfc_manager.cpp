@@ -76,12 +76,16 @@ bool TfSfcManager::generate(const poly_traj::Trajectory &trajectory,
     const PointVector samples = samplePiece(piece);
     DirectionSet directions;
     directions.requested_mode = parameters_.direction_mode;
+    corridor.metrics.requested_direction_mode =
+        static_cast<int>(parameters_.direction_mode);
     if (!computeDirections(piece, samples, piece_id, directions))
     {
       corridor.metrics.failure_reason = FailureReason::DIRECTION_FAILURE;
       prefix_active = false;
       continue;
     }
+    corridor.metrics.used_direction_mode =
+        static_cast<int>(directions.used_mode);
 
     FailureReason failure_reason = FailureReason::NONE;
     const bool inflated = inflator_.inflate(
@@ -182,12 +186,16 @@ bool TfSfcManager::generateFromSeedPath(
     const PointVector samples = sampleSegment(segment_start, segment_finish);
     DirectionSet directions;
     directions.requested_mode = parameters_.direction_mode;
+    corridor.metrics.requested_direction_mode =
+        static_cast<int>(parameters_.direction_mode);
     if (!computeDirections(direction_piece, samples, piece_id, directions))
     {
       corridor.metrics.failure_reason = FailureReason::DIRECTION_FAILURE;
       prefix_active = false;
       continue;
     }
+    corridor.metrics.used_direction_mode =
+        static_cast<int>(directions.used_mode);
 
     FailureReason failure_reason = FailureReason::NONE;
     const bool inflated = inflator_.inflate(
@@ -741,6 +749,15 @@ bool TfSfcManager::computeDirections(const poly_traj::Piece &piece,
   if (requested->computeDirections(piece, samples, piece_id, directions))
   {
     return true;
+  }
+
+  if (!parameters_.allow_direction_fallback)
+  {
+    ROS_ERROR_THROTTLE(
+        1.0,
+        "TF-SFC direction provider %d failed and direction fallback is disabled.",
+        static_cast<int>(parameters_.direction_mode));
+    return false;
   }
 
   directions.used_fallback = true;
