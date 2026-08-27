@@ -34,6 +34,10 @@ EGO-Planner-v2's original rebound, restart, swarm, and final collision-check pat
   If the simplified A* prefix has more bends than the available prefix pieces,
   the certified path stops at the farthest bend that fits instead of rejecting
   every corridor near the goal.
+- If the ordinary corridor seed fails capsule-clearance certification, TF-SFC
+  and EllipsoidDecomp retry once with the same clearance-aware global A* edge
+  validator. Original EGO A* calls retain their default behavior, and the
+  clearance-search time and provenance are logged separately.
 - EllipsoidDecomp dilates each seed segment independently. Collision-checked,
   tangent-aligned endpoint extensions give adjacent polytopes a larger shared
   interior while preserving the configured minimum-overlap certificate.
@@ -41,7 +45,7 @@ EGO-Planner-v2's original rebound, restart, swarm, and final collision-check pat
   MINCO piece budget, the optimizer keeps a certified prefix and labels the
   unconstrained final segment `piece_budget_tail` instead of rapidly rejecting
   every replan.
-- Schema-v15 experiment logs group optimizer calls by goal/replan/attempt
+- Schema-v18 experiment logs group optimizer calls by goal/replan/attempt
   and separately record the commanded global GoalSet and the effective local
   planning start/target. They expose seed-front-end success, actual corridor
   attempts, requested/used direction modes, direct-versus-hard spatial variables,
@@ -90,6 +94,9 @@ The launch files expose the following private ROS parameters:
 | `tf_sfc/decomp_local_bbox_{forward,lateral,vertical}` | Local EllipsoidDecomp bounding-box dimensions. |
 | `tf_sfc/decomp_overlap_extension` | Collision-checked tangent extension in metres; `0` disables it for ablation. |
 | `tf_sfc/decomp_retry_seed_validation_without_velocity` | Retry ordinary A* once when a velocity-aligned seed fails final occupancy validation; defaults to `true`. |
+| `tf_sfc/seed_retry_without_velocity_on_clearance_failure` | Permit one shared seed rebuild after clearance certification fails. |
+| `tf_sfc/seed_clearance_astar_enabled` | Use global clearance-certified edges for that rebuild; disable only for the v17 occupancy-A* ablation. |
+| `tf_sfc/seed_clearance_astar_time_limit` | Clearance-aware search timeout in seconds; defaults to 0.20 and is included in total planning time. |
 
 The hard mapping constrains junction points only. Polynomial interiors still use
 the sampled soft penalty and final sampled certification; this is not a
