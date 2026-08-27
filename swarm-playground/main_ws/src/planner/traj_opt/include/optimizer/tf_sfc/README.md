@@ -8,8 +8,10 @@ EGO-Planner-v2's original rebound, restart, swarm, and final collision-check pat
 
 - Frenet and trajectory-sample PCA direction providers.
 - A sensitivity-Gramian provider with an explicit per-piece Gramian input API.
-  Requesting sensitivity directions without Gramians falls back to PCA and records
-  the fallback in the corridor metrics.
+  Direction fallback is configurable: engineering runs may fall back and record
+  requested/used modes, while formal mode-2 runs disable fallback and fail closed.
+  The repository does not yet derive the anisotropic Gramian from the complete
+  local MINCO objective; PCA remains a named ablation.
 - A six-face trajectory-aligned OBB corridor baseline. Inflation follows the
   direction utility order, treats space outside the local inflated map as invalid,
   and conservatively rejects occupied voxels whose volume intersects the box.
@@ -39,13 +41,12 @@ EGO-Planner-v2's original rebound, restart, swarm, and final collision-check pat
   MINCO piece budget, the optimizer keeps a certified prefix and labels the
   unconstrained final segment `piece_budget_tail` instead of rapidly rejecting
   every replan.
-- Schema-v14 experiment logs group optimizer calls by goal/replan/attempt
+- Schema-v15 experiment logs group optimizer calls by goal/replan/attempt
   and separately record the commanded global GoalSet and the effective local
-  planning start/target. They retain sampled corridor penalties, strict final
-  rejection, and per-corridor inflation-candidate evaluation counts. Seed
-  clearance/repair failures are labelled separately from true corridor-overlap
-  failures so front-end and corridor-generation robustness can be reported
-  independently.
+  planning start/target. They expose seed-front-end success, actual corridor
+  attempts, requested/used direction modes, direct-versus-hard spatial variables,
+  and face–sample pairs per constraint evaluation. Seed clearance/repair failures
+  remain separate from true corridor-overlap failures.
 - Configurable EGO fallback. Operational launches may allow fallback; strict
   experiments can reject generation failures instead of silently counting an
   original-EGO result as TF-SFC success.
@@ -67,6 +68,7 @@ The launch files expose the following private ROS parameters:
 | `tf_sfc/enabled` | Master switch; defaults to `false`. |
 | `tf_sfc/corridor_method` | `obb` for the TF-SFC MVP or `ellipsoid_decomp` for the Liu et al. baseline. |
 | `tf_sfc/direction_mode` | `0`: Frenet, `1`: PCA, `2`: sensitivity Gramian. |
+| `tf_sfc/allow_direction_fallback` | Permit a failed direction provider to fall back to PCA/Frenet. Set `false` for formal mode-2 experiments. |
 | `tf_sfc/use_projection` | Project inner junctions into adjacent-corridor intersections. |
 | `tf_sfc/hard_corridor_parameterization` | Keep MINCO junctions inside corridor/intersection vertex hulls for every optimizer iterate. |
 | `tf_sfc/hard_max_vertices` | Maximum retained vertices per constrained junction; retained hull remains a safe subset. |
