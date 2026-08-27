@@ -724,6 +724,10 @@ struct SeedPathBuildInfo
   bool initial_velocity_seed_used = false;
   bool velocity_seed_fallback_used = false;
   std::string velocity_seed_fallback_reason = "none";
+  bool clearance_retry_attempted = false;
+  bool clearance_retry_success = false;
+  std::string clearance_retry_initial_strategy = "none";
+  int clearance_retry_first_failure_point_id = -1;
   int seed_validation_failure_point_id = -1;
   bool astar_search_attempted = false;
   bool astar_search_success = false;
@@ -1286,6 +1290,97 @@ bool buildFixedPieceSeedPath(const GridMap::Ptr &grid_map,
                  : ego_planner::tf_sfc::FailureReason::SEED_PATH_FAILURE);
   return valid;
 }
+
+bool buildFixedPieceSeedPathWithClearanceRetry(
+    const GridMap::Ptr &grid_map,
+    const AStar::Ptr &a_star,
+    const Eigen::Vector3d &start,
+    const Eigen::Vector3d &start_velocity,
+    const Eigen::Vector3d &finish,
+    const int piece_num,
+    const bool allow_partial_corridors,
+    const int min_valid_pieces,
+    const double min_junction_clearance,
+    const double junction_refine_radius,
+    const double junction_refine_step,
+    const double initial_velocity_segment_length,
+    const double initial_velocity_threshold,
+    const double degenerate_seed_length,
+    const bool retry_without_velocity_on_clearance_failure,
+    ego_planner::tf_sfc::PointVector &seed_path,
+    int &covered_piece_num,
+    ego_planner::tf_sfc::FailureReason &uncovered_failure_reason,
+    ego_planner::tf_sfc::FailureReason &failure_reason,
+    SeedPathBuildInfo &build_info)
+{
+  const bool primary_ok = buildFixedPieceSeedPath(
+      grid_map, a_star, start, start_velocity, finish, piece_num,
+      allow_partial_corridors, min_valid_pieces, min_junction_clearance,
+      junction_refine_radius, junction_refine_step,
+      initial_velocity_segment_length, initial_velocity_threshold,
+      degenerate_seed_length, seed_path, covered_piece_num,
+      uncovered_failure_reason, failure_reason, build_info);
+  if (primary_ok ||
+      !retry_without_velocity_on_clearance_failure ||
+      failure_reason !=
+          ego_planner::tf_sfc::FailureReason::SEED_CLEARANCE_FAILURE ||
+      !build_info.initial_velocity_seed_used)
+  {
+    return primary_ok;
+  }
+
+  const SeedPathBuildInfo primary_info = build_info;
+  ROS_WARN(
+      "TF-SFC velocity-aligned seed failed clearance certification at "
+      "point %d; retrying once with ordinary A*.",
+      primary_info.seed_validation_failure_point_id);
+
+  ego_planner::tf_sfc::PointVector retry_seed_path;
+  int retry_covered_piece_num = 0;
+  ego_planner::tf_sfc::FailureReason retry_uncovered_failure_reason =
+      ego_planner::tf_sfc::FailureReason::NONE;
+  ego_planner::tf_sfc::FailureReason retry_failure_reason =
+      ego_planner::tf_sfc::FailureReason::NONE;
+  SeedPathBuildInfo retry_info;
+  const bool retry_ok = buildFixedPieceSeedPath(
+      grid_map, a_star, start, Eigen::Vector3d::Zero(), finish, piece_num,
+      allow_partial_corridors, min_valid_pieces, min_junction_clearance,
+      junction_refine_radius, junction_refine_step, 0.0,
+      initial_velocity_threshold, degenerate_seed_length, retry_seed_path,
+      retry_covered_piece_num, retry_uncovered_failure_reason,
+      retry_failure_reason, retry_info);
+
+  retry_info.clearance_retry_attempted = true;
+  retry_info.clearance_retry_success = retry_ok;
+  retry_info.clearance_retry_initial_strategy = primary_info.strategy;
+  retry_info.clearance_retry_first_failure_point_id =
+      primary_info.seed_validation_failure_point_id;
+  retry_info.initial_velocity_seed_attempted =
+      primary_info.initial_velocity_seed_attempted;
+  retry_info.initial_velocity_seed_used = false;
+  retry_info.velocity_seed_fallback_used = true;
+  retry_info.velocity_seed_fallback_reason = "seed_clearance_failure";
+  retry_info.astar_search_attempted =
+      retry_info.astar_search_attempted ||
+      primary_info.astar_search_attempted;
+  retry_info.astar_search_success =
+      retry_info.astar_search_success ||
+      primary_info.astar_search_success;
+  retry_info.astar_search_call_count +=
+      primary_info.astar_search_call_count;
+  retry_info.astar_search_ms += primary_info.astar_search_ms;
+  retry_info.seed_path_build_ms += primary_info.seed_path_build_ms;
+  retry_info.strategy +=
+      retry_ok ? "_clearance_velocity_retry_succeeded"
+               : "_clearance_velocity_retry_failed";
+
+  seed_path.swap(retry_seed_path);
+  covered_piece_num = retry_covered_piece_num;
+  uncovered_failure_reason = retry_uncovered_failure_reason;
+  failure_reason = retry_failure_reason;
+  build_info = retry_info;
+  return retry_ok;
+}
 }
 
 namespace ego_planner
@@ -1488,7 +1583,7 @@ namespace ego_planner
           failed.metrics.failure_reason = tf_sfc::FailureReason::DECOMP_UTIL_UNAVAILABLE;
           tf_corridors_.push_back(failed);
         }
-        else if (!buildFixedPieceSeedPath(grid_map_, a_star_, iniState.col(0),
+        else if (!buildFixedPieceSeedPathWithClearanceRetry(grid_map_, a_star_, iniState.col(0),
                                           iniState.col(1), finState.col(0), piece_num_,
                                           tf_sfc_parameters_.allow_partial_corridors,
                                           tf_sfc_parameters_.min_valid_pieces,
@@ -1498,6 +1593,8 @@ namespace ego_planner
                                           tf_sfc_parameters_.decomp_initial_velocity_segment,
                                           tf_sfc_parameters_.decomp_initial_velocity_threshold,
                                           tf_sfc_parameters_.decomp_degenerate_seed_length,
+                                          tf_sfc_parameters_
+                                              .seed_retry_without_velocity_on_clearance_failure,
                                           seed_path, covered_piece_num,
                                           uncovered_failure_reason,
                                           seed_failure_reason,
@@ -1639,7 +1736,7 @@ namespace ego_planner
             tf_sfc::FailureReason::NONE;
         tf_sfc::FailureReason seed_failure_reason =
             tf_sfc::FailureReason::NONE;
-        if (!buildFixedPieceSeedPath(
+        if (!buildFixedPieceSeedPathWithClearanceRetry(
                 grid_map_, a_star_, iniState.col(0), iniState.col(1),
                 finState.col(0), piece_num_,
                 tf_sfc_parameters_.allow_partial_corridors,
@@ -1650,6 +1747,8 @@ namespace ego_planner
                 tf_sfc_parameters_.decomp_initial_velocity_segment,
                 tf_sfc_parameters_.decomp_initial_velocity_threshold,
                 tf_sfc_parameters_.decomp_degenerate_seed_length,
+                tf_sfc_parameters_
+                    .seed_retry_without_velocity_on_clearance_failure,
                 seed_path, covered_piece_num, uncovered_failure_reason,
                 seed_failure_reason, seed_path_build_info))
         {
@@ -1879,6 +1978,14 @@ namespace ego_planner
               seed_path_build_info.velocity_seed_fallback_used;
           record.velocity_seed_fallback_reason =
               seed_path_build_info.velocity_seed_fallback_reason;
+          record.clearance_retry_attempted =
+              seed_path_build_info.clearance_retry_attempted;
+          record.clearance_retry_success =
+              seed_path_build_info.clearance_retry_success;
+          record.clearance_retry_initial_strategy =
+              seed_path_build_info.clearance_retry_initial_strategy;
+          record.clearance_retry_first_failure_point_id =
+              seed_path_build_info.clearance_retry_first_failure_point_id;
           record.seed_validation_failure_point_id =
               seed_path_build_info.seed_validation_failure_point_id;
           populate_seed_record(record);
@@ -4250,6 +4357,10 @@ namespace ego_planner
              tf_sfc_parameters_.decomp_degenerate_seed_length, 0.10);
     nh.param("tf_sfc/decomp_retry_seed_validation_without_velocity",
              tf_sfc_parameters_.decomp_retry_seed_validation_without_velocity,
+             true);
+    nh.param("tf_sfc/seed_retry_without_velocity_on_clearance_failure",
+             tf_sfc_parameters_
+                 .seed_retry_without_velocity_on_clearance_failure,
              true);
 
     int direction_mode = static_cast<int>(tf_sfc::DirectionMode::PCA);
