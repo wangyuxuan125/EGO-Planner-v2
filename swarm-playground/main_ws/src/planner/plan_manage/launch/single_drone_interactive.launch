@@ -43,6 +43,7 @@
     <arg name="tf_sfc_decomp_initial_velocity_threshold" default="0.20"/>
     <arg name="tf_sfc_decomp_degenerate_seed_length" default="0.10"/>
     <arg name="tf_sfc_decomp_retry_seed_validation_without_velocity" default="true"/>
+    <arg name="tf_sfc_seed_retry_without_velocity_on_clearance_failure" default="true"/>
 
     <!-- map -->
     <node pkg ="map_generator" name ="random_forest" type ="random_forest" output = "screen">
@@ -115,5 +116,6 @@
         <arg name="tf_sfc_decomp_initial_velocity_threshold" value="$(arg tf_sfc_decomp_initial_velocity_threshold)"/>
         <arg name="tf_sfc_decomp_degenerate_seed_length" value="$(arg tf_sfc_decomp_degenerate_seed_length)"/>
         <arg name="tf_sfc_decomp_retry_seed_validation_without_velocity" value="$(arg tf_sfc_decomp_retry_seed_validation_without_velocity)"/>
+        <arg name="tf_sfc_seed_retry_without_velocity_on_clearance_failure" value="$(arg tf_sfc_seed_retry_without_velocity_on_clearance_failure)"/>
     </include>
 </launch>
