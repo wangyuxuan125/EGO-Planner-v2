@@ -1294,6 +1294,7 @@ namespace ego_planner
     std::string terminal_failure_reason = "none";
     bool corridor_retry_requested = false;
     bool strict_corridor_rejected = false;
+    bool corridor_generation_attempted = false;
     const std::string requested_corridor_method = tf_sfc_parameters_.enabled
                                                       ? tf_sfc_parameters_.corridor_method
                                                       : "ego";
@@ -1358,6 +1359,42 @@ namespace ego_planner
           record.seed_path_build_ms =
               seed_path_build_info.seed_path_build_ms;
           record.corridor_inflation_ms = tf_sfc_inflation_ms;
+          record.seed_frontend_evaluated =
+              tf_sfc_parameters_.enabled && static_cast<bool>(tf_sfc_manager_);
+          record.seed_frontend_success =
+              record.seed_frontend_evaluated &&
+              seed_path_build_info.seed_path_point_count >= 2 &&
+              seed_path_build_info.seed_path_edge_valid;
+          record.corridor_generation_attempted =
+              corridor_generation_attempted;
+          record.direction_fallback_allowed =
+              tf_sfc_parameters_.allow_direction_fallback;
+          record.direct_spatial_variable_count =
+              3 * std::max(piece_num_ - 1, 0);
+          record.used_direction_mode = -1;
+          for (const tf_sfc::Corridor &corridor : logged_corridors)
+          {
+            const tf_sfc::CorridorMetrics &metrics = corridor.metrics;
+            if (metrics.valid && metrics.used_direction_mode >= 0)
+            {
+              if (record.used_direction_mode < 0)
+              {
+                record.used_direction_mode = metrics.used_direction_mode;
+              }
+              else if (record.used_direction_mode !=
+                       metrics.used_direction_mode)
+              {
+                // -2 denotes a mixed-mode corridor set.
+                record.used_direction_mode = -2;
+              }
+            }
+            if (metrics.valid)
+            {
+              record.face_sample_pairs_per_evaluation +=
+                  metrics.face_count *
+                  (std::max(tf_sfc_parameters_.samples_per_piece, 2) + 1);
+            }
+          }
         };
 
     // Preparision 2: Trajectory related params
@@ -1389,6 +1426,7 @@ namespace ego_planner
             [&](const tf_sfc::PointVector &candidate_seed,
                 const tf_sfc::FailureReason candidate_uncovered_reason) {
               const ros::WallTime inflation_started = ros::WallTime::now();
+              corridor_generation_attempted = true;
               const bool generated = tf_sfc_manager_->generateEllipsoidDecomp(
                   candidate_seed, piece_num_, candidate_uncovered_reason,
                   tf_corridors_);
@@ -1583,6 +1621,7 @@ namespace ego_planner
           }
           jerkOpt_.generate(guidedInnerPts, initT);
           const ros::WallTime inflation_started = ros::WallTime::now();
+          corridor_generation_attempted = true;
           corridor_ok = tf_sfc_manager_->generateFromSeedPath(
               jerkOpt_.getTraj(), seed_path, uncovered_failure_reason,
               tf_corridors_);
@@ -1681,6 +1720,7 @@ namespace ego_planner
               tf_corridors_.clear();
               const ros::WallTime retry_inflation_started =
                   ros::WallTime::now();
+              corridor_generation_attempted = true;
               corridor_ok = tf_sfc_manager_->generateFromSeedPath(
                   jerkOpt_.getTraj(), fallback_seed_path,
                   fallback_uncovered_failure_reason, tf_corridors_);
@@ -2350,6 +2390,13 @@ namespace ego_planner
               : 0;
       record.hard_total_junction_count = piece_num_ - 1;
       record.hard_spatial_variable_count = spatial_variable_num_;
+      if (record.hard_parameterization_active &&
+          record.direct_spatial_variable_count > 0)
+      {
+        record.hard_spatial_variable_overhead_ratio =
+            static_cast<double>(record.hard_spatial_variable_count) /
+            static_cast<double>(record.direct_spatial_variable_count);
+      }
       record.max_junction_violation_initial_m =
           max_junction_violation_initial_m;
       record.max_junction_violation_final_m =
@@ -4095,6 +4142,8 @@ namespace ego_planner
     nh.param("tf_sfc/use_soft_penalty", tf_sfc_parameters_.use_soft_penalty, false);
     nh.param("tf_sfc/allow_partial_corridors", tf_sfc_parameters_.allow_partial_corridors, true);
     nh.param("tf_sfc/allow_ego_fallback", tf_sfc_parameters_.allow_ego_fallback, true);
+    nh.param("tf_sfc/allow_direction_fallback",
+             tf_sfc_parameters_.allow_direction_fallback, true);
     nh.param("tf_sfc/enforce_final_corridor",
              tf_sfc_parameters_.enforce_final_corridor, true);
     nh.param("tf_sfc/hard_corridor_parameterization",
