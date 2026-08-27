@@ -140,9 +140,12 @@ bool AStar::ConvertToIndexAndAdjustStartEndPoints(Vector3d start_pt, Vector3d en
     return true;
 }
 
-ASTAR_RET AStar::AstarSearch(const double step_size, Vector3d start_pt, Vector3d end_pt,
+ASTAR_RET AStar::AstarSearch(const double step_size, Vector3d start_pt,
+                            Vector3d end_pt,
                             const bool restrict_to_inflated_map,
-                            const bool validate_continuous_edges)
+                            const bool validate_continuous_edges,
+                            const EdgeValidator &edge_validator,
+                            const double time_limit_s)
 {
     ros::Time time_1 = ros::Time::now();
     ++rounds_;
@@ -263,11 +266,14 @@ ASTAR_RET AStar::AstarSearch(const double step_size, Vector3d start_pt, Vector3d
                         continue; //in closed set.
                     }
 
+                    const Vector3d current_coord =
+                        Index2Coord(current->index);
                     const Vector3d neighbor_coord =
                         Index2Coord(neighborPtr->index);
                     if (checkOccupancy(neighbor_coord) ||
-                        !continuousEdgeIsFree(Index2Coord(current->index),
-                                              neighbor_coord))
+                        !continuousEdgeIsFree(current_coord, neighbor_coord) ||
+                        (edge_validator &&
+                         !edge_validator(current_coord, neighbor_coord)))
                     {
                         continue;
                     }
@@ -295,9 +301,11 @@ ASTAR_RET AStar::AstarSearch(const double step_size, Vector3d start_pt, Vector3d
                     }
                 }
         ros::Time time_2 = ros::Time::now();
-        if ((time_2 - time_1).toSec() > 0.2)
+        if (time_limit_s > 0.0 &&
+            (time_2 - time_1).toSec() > time_limit_s)
         {
-            ROS_WARN("Failed in A star path searching !!! 0.2 seconds time limit exceeded.");
+            ROS_WARN("Failed in A star path searching: %.3f second time limit exceeded.",
+                     time_limit_s);
             return ASTAR_RET::SEARCH_ERR;
         }
     }
