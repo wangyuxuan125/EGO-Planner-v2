@@ -60,6 +60,7 @@
     <arg name="tf_sfc_junction_refine_radius" default="0.50"/>
     <arg name="tf_sfc_junction_refine_step" default="0.05"/>
     <arg name="tf_sfc_direction_mode" default="1"/>
+    <arg name="tf_sfc_allow_direction_fallback" default="true"/>
     <arg name="tf_sfc_log_enabled" default="true"/>
     <arg name="tf_sfc_log_directory" default="$(env HOME)/tf_sfc_results/ego"/>
     <arg name="tf_sfc_experiment_tag" default="default"/>
@@ -192,6 +193,7 @@
         <param name="tf_sfc/visualization_frame" value="$(arg tf_sfc_visualization_frame)" type="string"/>
         <param name="tf_sfc/min_valid_pieces" value="$(arg tf_sfc_min_valid_pieces)" type="int"/>
         <param name="tf_sfc/direction_mode" value="$(arg tf_sfc_direction_mode)" type="int"/>
+        <param name="tf_sfc/allow_direction_fallback" value="$(arg tf_sfc_allow_direction_fallback)" type="bool"/>
         <param name="tf_sfc/log_enabled" value="$(arg tf_sfc_log_enabled)" type="bool"/>
         <param name="tf_sfc/log_directory" value="$(arg tf_sfc_log_directory)" type="string"/>
         <param name="tf_sfc/experiment_tag" value="$(arg tf_sfc_experiment_tag)" type="string"/>
