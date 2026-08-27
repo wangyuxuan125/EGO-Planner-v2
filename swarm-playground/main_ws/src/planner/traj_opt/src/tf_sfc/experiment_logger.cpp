@@ -33,12 +33,16 @@ const char *kRunHeader =
     "astar_search_attempted,astar_search_success,astar_search_call_count,"
     "astar_search_ms,raw_seed_path_point_count,raw_seed_path_length_m,"
     "seed_path_point_count,seed_path_length_m,seed_path_edge_valid,"
-    "seed_path_coverage_ratio,status,requested_method,method,"
-    "tf_sfc_enabled,direction_mode,success,collision_free,tf_sfc_generated,"
+    "seed_path_coverage_ratio,seed_frontend_evaluated,seed_frontend_success,"
+    "corridor_generation_attempted,status,requested_method,method,"
+    "tf_sfc_enabled,direction_mode,used_direction_mode,"
+    "direction_fallback_allowed,success,collision_free,tf_sfc_generated,"
     "final_obstacle_collision,final_swarm_clearance_failure,terminal_failure_reason,"
     "fallback_to_ego,projection_applied,hard_parameterization_enabled,"
     "hard_parameterization_active,hard_constrained_junction_count,"
-    "hard_total_junction_count,hard_spatial_variable_count,"
+    "hard_total_junction_count,direct_spatial_variable_count,"
+    "hard_spatial_variable_count,hard_spatial_variable_overhead_ratio,"
+    "face_sample_pairs_per_evaluation,"
     "max_junction_violation_initial_m,max_junction_violation_final_m,"
     "lbfgs_result,total_planning_ms,"
     "optimizer_ms,corridor_generation_ms,seed_path_build_ms,"
@@ -69,7 +73,8 @@ const char *kCorridorHeader =
     "min_obstacle_sample_distance_m,separation_failure_sample_id,"
     "separation_failure_at_endpoint,overlap_radius_to_next,"
     "seed_containment_evaluated,seed_contained,"
-    "seed_containment_max_violation_m,valid,direction_fallback,failure_reason";
+    "seed_containment_max_violation_m,valid,direction_fallback,"
+    "requested_direction_mode,used_direction_mode,failure_reason";
 }
 
 ExperimentLogger::ExperimentLogger(const bool enabled,
@@ -149,7 +154,7 @@ bool ExperimentLogger::ensureDirectory() const
 
 bool ExperimentLogger::appendRun(const ExperimentRunRecord &record) const
 {
-  const std::string path = directory_ + "/ego_runs_v14_drone_" +
+  const std::string path = directory_ + "/ego_runs_v15_drone_" +
                            std::to_string(record.drone_id) + ".csv";
   const bool header = fileNeedsHeader(path);
   std::ofstream output(path, std::ios::out | std::ios::app);
@@ -162,7 +167,7 @@ bool ExperimentLogger::appendRun(const ExperimentRunRecord &record) const
     output << kRunHeader << '\n';
   }
   output << std::setprecision(17)
-         << 14 << ',' << csv(record.run_id) << ','
+         << 15 << ',' << csv(record.run_id) << ','
          << csv(record.planning_event_id) << ',' << record.timestamp_s << ','
          << csv(record.experiment_tag) << ',' << record.drone_id << ','
          << record.goal_id << ',' << record.replan_id << ','
@@ -194,9 +199,13 @@ bool ExperimentLogger::appendRun(const ExperimentRunRecord &record) const
          << record.seed_path_length_m << ','
          << record.seed_path_edge_valid << ','
          << record.seed_path_coverage_ratio << ','
+         << record.seed_frontend_evaluated << ','
+         << record.seed_frontend_success << ','
+         << record.corridor_generation_attempted << ','
          << csv(record.status) << ',' << csv(record.requested_method) << ','
          << csv(record.method) << ',' << record.tf_sfc_enabled << ','
-         << record.direction_mode << ',' << record.success << ','
+         << record.direction_mode << ',' << record.used_direction_mode << ','
+         << record.direction_fallback_allowed << ',' << record.success << ','
          << record.collision_free << ',' << record.tf_sfc_generated << ','
          << record.final_obstacle_collision << ','
          << record.final_swarm_clearance_failure << ','
@@ -206,7 +215,10 @@ bool ExperimentLogger::appendRun(const ExperimentRunRecord &record) const
          << record.hard_parameterization_active << ','
          << record.hard_constrained_junction_count << ','
          << record.hard_total_junction_count << ','
+         << record.direct_spatial_variable_count << ','
          << record.hard_spatial_variable_count << ','
+         << record.hard_spatial_variable_overhead_ratio << ','
+         << record.face_sample_pairs_per_evaluation << ','
          << record.max_junction_violation_initial_m << ','
          << record.max_junction_violation_final_m << ','
          << record.lbfgs_result << ',' << record.total_planning_ms << ','
@@ -252,7 +264,7 @@ bool ExperimentLogger::appendCorridors(const ExperimentRunRecord &record,
   {
     return true;
   }
-  const std::string path = directory_ + "/ego_corridors_v14_drone_" +
+  const std::string path = directory_ + "/ego_corridors_v15_drone_" +
                            std::to_string(record.drone_id) + ".csv";
   const bool header = fileNeedsHeader(path);
   std::ofstream output(path, std::ios::out | std::ios::app);
@@ -268,7 +280,7 @@ bool ExperimentLogger::appendCorridors(const ExperimentRunRecord &record,
   for (const Corridor &corridor : corridors)
   {
     const CorridorMetrics &metrics = corridor.metrics;
-    output << 14 << ',' << csv(record.run_id) << ',' << record.timestamp_s << ','
+    output << 15 << ',' << csv(record.run_id) << ',' << record.timestamp_s << ','
            << csv(record.experiment_tag) << ',' << record.drone_id << ','
            << metrics.piece_id << ',' << csv(record.requested_method) << ','
            << csv(record.method) << ',' << metrics.face_count << ','
@@ -287,6 +299,8 @@ bool ExperimentLogger::appendCorridors(const ExperimentRunRecord &record,
            << metrics.seed_contained << ','
            << metrics.seed_containment_max_violation_m << ','
            << metrics.valid << ',' << metrics.direction_fallback << ','
+           << metrics.requested_direction_mode << ','
+           << metrics.used_direction_mode << ','
            << failureReasonName(metrics.failure_reason) << '\n';
   }
   return static_cast<bool>(output);
