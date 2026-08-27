@@ -7,7 +7,7 @@ The paper claim, development milestones, fairness rules and freeze gates are def
 - Original EGO, PCA/Frenet OBB-SFC, and Liu/DecompUtil EllipsoidDecomp can be selected explicitly.
 - Strict experiments disable EGO fallback and retain generation/optimization failures.
 - Valid prefix corridors constrain MINCO junctions through a GCOPTER-style vertex-hull parameterization and enter the curve objective through a frozen piece-wise half-space penalty; EllipsoidDecomp also supplies the A* guided initial points.
-- Schema v9 records goal/replan/retry/topology-attempt identity; separates A* search, complete seed construction, corridor inflation and optimizer timing; records raw/final seed length, continuous edge validity and map coverage; adds Liu/FIRI-style line-seed containment evidence; and preserves hard-parameterization, sampled curve violation, continuation, rollback and final safety failures.
+- Schema v15 records goal/replan/retry/topology-attempt identity; separates A* search, certified seed-front-end success and actual corridor-generation attempts; records requested/used direction modes and whether fallback was permitted; measures direct versus hard spatial variables and face–sample pairs per constraint evaluation; retains line-seed containment, timing, continuation, rollback and final safety failures.
 - A sampled final-corridor gate performs bounded penalty continuation and rejects unresolved corridor violations instead of counting them as TF-SFC successes. Every continuation candidate must remain finite and collision-free and improve the previous best violation; otherwise v6 restores the best safe iterate before returning failure.
 - EllipsoidDecomp seeding handles same-voxel/zero-length queries with a collision-checked short segment, optionally aligns the first seed segment with measured velocity, traverses every intersected voxel, and retries ordinary A* once when final velocity-seed validation reports occupancy.
 - DecompROS publication is kept separate from corridor generation and optimization.
@@ -24,7 +24,7 @@ The paper claim, development milestones, fairness rules and freeze gates are def
 
 ## Required if the paper claims the full TF-SFC method
 
-- Construct and validate the actual per-piece MINCO sensitivity Gramian instead of reporting the current PCA fallback as sensitivity mode.
+- Construct and validate an anisotropic per-piece deformation metric from the complete local MINCO objective (including environment/dynamic curvature), then feed it through the existing Gramian API. Formal mode-2 runs must set `tf_sfc_allow_direction_fallback:=false`; PCA fallback data is an ablation, never the main method.
 - Implement the claimed obstacle cutting-plane selection, face pruning/budgeting and general overlap optimization, with ablations for each component.
 - Add corridor MVIE volume (or a justified Chebyshev-radius approximation). The current schema provides line-seed containment and local-map coverage, but these must not be presented as region-volume quality.
 - Validate multi-drone interactions if swarm performance is part of the paper claim; current evidence is mainly single-drone corridor integration.
