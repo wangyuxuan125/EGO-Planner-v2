@@ -1325,6 +1325,12 @@ namespace ego_planner
               std::to_string(experiment_goal_id_) + "-r" +
               std::to_string(experiment_replan_id_);
           record.retry_index = experiment_retry_index_;
+          record.planning_start_x_m = iniState(0, 0);
+          record.planning_start_y_m = iniState(1, 0);
+          record.planning_start_z_m = iniState(2, 0);
+          record.planning_target_x_m = finState(0, 0);
+          record.planning_target_y_m = finState(1, 0);
+          record.planning_target_z_m = finState(2, 0);
           record.astar_search_attempted =
               seed_path_build_info.astar_search_attempted;
           record.astar_search_success =
