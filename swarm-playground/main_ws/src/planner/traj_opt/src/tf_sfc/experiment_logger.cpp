@@ -29,7 +29,9 @@ const char *kRunHeader =
     "planning_target_x_m,planning_target_y_m,planning_target_z_m,"
     "seed_path_strategy,initial_velocity_seed_attempted,"
     "initial_velocity_seed_used,velocity_seed_fallback_used,"
-    "velocity_seed_fallback_reason,seed_validation_failure_point_id,"
+    "velocity_seed_fallback_reason,clearance_retry_attempted,"
+    "clearance_retry_success,clearance_retry_initial_strategy,"
+    "clearance_retry_first_failure_point_id,seed_validation_failure_point_id,"
     "astar_search_attempted,astar_search_success,astar_search_call_count,"
     "astar_search_ms,raw_seed_path_point_count,raw_seed_path_length_m,"
     "seed_path_point_count,seed_path_length_m,seed_path_edge_valid,"
@@ -158,7 +160,7 @@ bool ExperimentLogger::ensureDirectory() const
 
 bool ExperimentLogger::appendRun(const ExperimentRunRecord &record) const
 {
-  const std::string path = directory_ + "/ego_runs_v16_drone_" +
+  const std::string path = directory_ + "/ego_runs_v17_drone_" +
                            std::to_string(record.drone_id) + ".csv";
   const bool header = fileNeedsHeader(path);
   std::ofstream output(path, std::ios::out | std::ios::app);
@@ -171,7 +173,7 @@ bool ExperimentLogger::appendRun(const ExperimentRunRecord &record) const
     output << kRunHeader << '\n';
   }
   output << std::setprecision(17)
-         << 16 << ',' << csv(record.run_id) << ','
+         << 17 << ',' << csv(record.run_id) << ','
          << csv(record.planning_event_id) << ',' << record.timestamp_s << ','
          << csv(record.experiment_tag) << ',' << record.drone_id << ','
          << record.goal_id << ',' << record.replan_id << ','
@@ -192,6 +194,10 @@ bool ExperimentLogger::appendRun(const ExperimentRunRecord &record) const
          << record.initial_velocity_seed_used << ','
          << record.velocity_seed_fallback_used << ','
          << csv(record.velocity_seed_fallback_reason) << ','
+         << record.clearance_retry_attempted << ','
+         << record.clearance_retry_success << ','
+         << csv(record.clearance_retry_initial_strategy) << ','
+         << record.clearance_retry_first_failure_point_id << ','
          << record.seed_validation_failure_point_id << ','
          << record.astar_search_attempted << ','
          << record.astar_search_success << ','
@@ -280,7 +286,7 @@ bool ExperimentLogger::appendCorridors(const ExperimentRunRecord &record,
   {
     return true;
   }
-  const std::string path = directory_ + "/ego_corridors_v16_drone_" +
+  const std::string path = directory_ + "/ego_corridors_v17_drone_" +
                            std::to_string(record.drone_id) + ".csv";
   const bool header = fileNeedsHeader(path);
   std::ofstream output(path, std::ios::out | std::ios::app);
@@ -296,7 +302,7 @@ bool ExperimentLogger::appendCorridors(const ExperimentRunRecord &record,
   for (const Corridor &corridor : corridors)
   {
     const CorridorMetrics &metrics = corridor.metrics;
-    output << 16 << ',' << csv(record.run_id) << ',' << record.timestamp_s << ','
+    output << 17 << ',' << csv(record.run_id) << ',' << record.timestamp_s << ','
            << csv(record.experiment_tag) << ',' << record.drone_id << ','
            << metrics.piece_id << ',' << csv(record.requested_method) << ','
            << csv(record.method) << ',' << metrics.face_count << ','
