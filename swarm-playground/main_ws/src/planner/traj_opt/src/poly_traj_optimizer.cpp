@@ -1067,7 +1067,7 @@ bool buildFixedPieceSeedPath(const GridMap::Ptr &grid_map,
         corner_repair_failure_point_id;
     build_info.strategy += "_clearance_local_grid_repair_failed";
     failure_reason =
-        ego_planner::tf_sfc::FailureReason::OVERLAP_TOO_SMALL;
+        ego_planner::tf_sfc::FailureReason::SEED_CLEARANCE_FAILURE;
     return false;
   }
   if (local_search_repair_used)
@@ -1211,7 +1211,7 @@ bool buildFixedPieceSeedPath(const GridMap::Ptr &grid_map,
   {
     build_info.strategy += "_overlap_local_refine_failed";
     failure_reason =
-        ego_planner::tf_sfc::FailureReason::OVERLAP_TOO_SMALL;
+        ego_planner::tf_sfc::FailureReason::SEED_CLEARANCE_FAILURE;
     return false;
   }
   if (junction_refinement_used)
@@ -1249,7 +1249,7 @@ bool buildFixedPieceSeedPath(const GridMap::Ptr &grid_map,
           ego_planner::tf_sfc::FailureReason::NONE)
       {
         edge_failure_reason =
-            ego_planner::tf_sfc::FailureReason::OVERLAP_TOO_SMALL;
+            ego_planner::tf_sfc::FailureReason::SEED_CLEARANCE_FAILURE;
       }
     }
   }
@@ -1325,6 +1325,11 @@ namespace ego_planner
               std::to_string(experiment_goal_id_) + "-r" +
               std::to_string(experiment_replan_id_);
           record.retry_index = experiment_retry_index_;
+          record.commanded_goal_valid =
+              experiment_commanded_goal_valid_;
+          record.commanded_goal_x_m = experiment_commanded_goal_.x();
+          record.commanded_goal_y_m = experiment_commanded_goal_.y();
+          record.commanded_goal_z_m = experiment_commanded_goal_.z();
           record.planning_start_x_m = iniState(0, 0);
           record.planning_start_y_m = iniState(1, 0);
           record.planning_start_z_m = iniState(2, 0);
@@ -4273,15 +4278,21 @@ namespace ego_planner
 
   void PolyTrajOptimizer::setIfTouchGoal(const bool touch_goal) { touch_goal_ = touch_goal; }
 
-  void PolyTrajOptimizer::setExperimentContext(const std::uint64_t goal_id,
-                                               const std::uint64_t replan_id,
-                                               const int retry_index,
-                                               const int attempt_id)
+  void PolyTrajOptimizer::setExperimentContext(
+      const std::uint64_t goal_id,
+      const std::uint64_t replan_id,
+      const int retry_index,
+      const int attempt_id,
+      const Eigen::Vector3d &commanded_goal,
+      const bool commanded_goal_valid)
   {
     experiment_goal_id_ = goal_id;
     experiment_replan_id_ = replan_id;
     experiment_retry_index_ = retry_index;
     experiment_attempt_id_ = attempt_id;
+    experiment_commanded_goal_ = commanded_goal;
+    experiment_commanded_goal_valid_ =
+        commanded_goal_valid && commanded_goal.allFinite();
   }
 
   void PolyTrajOptimizer::setConstraintPoints(ConstraintPoints cps) { cps_ = cps; }
