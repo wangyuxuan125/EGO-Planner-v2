@@ -62,7 +62,8 @@ enum class FailureReason
   PIECE_BUDGET_TAIL = 15,
   HARD_PARAMETERIZATION_FAILURE = 16,
   FACE_BUDGET_EXHAUSTED = 17,
-  OBSTACLE_SEPARATION_FAILURE = 18
+  OBSTACLE_SEPARATION_FAILURE = 18,
+  SEED_CLEARANCE_FAILURE = 19
 };
 
 inline const char *failureReasonName(const FailureReason reason)
@@ -88,6 +89,7 @@ inline const char *failureReasonName(const FailureReason reason)
   case FailureReason::HARD_PARAMETERIZATION_FAILURE: return "hard_parameterization_failure";
   case FailureReason::FACE_BUDGET_EXHAUSTED: return "face_budget_exhausted";
   case FailureReason::OBSTACLE_SEPARATION_FAILURE: return "obstacle_separation_failure";
+  case FailureReason::SEED_CLEARANCE_FAILURE: return "seed_clearance_failure";
   }
   return "unknown";
 }
