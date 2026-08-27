@@ -201,6 +201,12 @@ struct CorridorMetrics
 struct CorridorEvaluation
 {
   int constrained_piece_count = 0;
+  int evaluated_face_sample_count = 0;
+  int violating_face_sample_count = 0;
+  int max_violation_piece_id = -1;
+  int max_violation_face_id = -1;
+  int max_violation_sample_id = -1;
+  double max_violation_time_ratio = 0.0;
   double penalty_cost = 0.0;
   double max_violation_m = 0.0;
 };

@@ -704,10 +704,25 @@ CorridorEvaluation TfSfcManager::evaluateTrajectory(
         {
           continue;
         }
+        ++evaluation.evaluated_face_sample_count;
         const double signed_violation =
             normal.dot(point) - corridor.hpoly(face_id, 3);
-        evaluation.max_violation_m = std::max(
-            evaluation.max_violation_m, signed_violation / normal_norm);
+        const double normalized_violation =
+            signed_violation / normal_norm;
+        if (normalized_violation > 0.0)
+        {
+          ++evaluation.violating_face_sample_count;
+        }
+        if (normalized_violation > evaluation.max_violation_m)
+        {
+          evaluation.max_violation_m = normalized_violation;
+          evaluation.max_violation_piece_id = piece_id;
+          evaluation.max_violation_face_id = face_id;
+          evaluation.max_violation_sample_id = sample_id;
+          evaluation.max_violation_time_ratio =
+              static_cast<double>(sample_id) /
+              static_cast<double>(sample_count);
+        }
         const double buffered_violation =
             signed_violation + parameters_.penalty_epsilon;
         if (parameters_.use_soft_penalty && buffered_violation > 0.0)

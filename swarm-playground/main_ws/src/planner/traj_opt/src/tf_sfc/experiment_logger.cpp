@@ -50,7 +50,7 @@ const char *kRunHeader =
     "hard_parameterization_active,hard_constrained_junction_count,"
     "hard_total_junction_count,direct_spatial_variable_count,"
     "hard_spatial_variable_count,hard_spatial_variable_overhead_ratio,"
-    "face_sample_pairs_per_evaluation,"
+    "face_sample_pairs_per_evaluation,corridor_penalty_samples_per_piece,"
     "max_junction_violation_initial_m,max_junction_violation_final_m,"
     "lbfgs_result,total_planning_ms,"
     "optimizer_ms,corridor_generation_ms,seed_path_build_ms,"
@@ -63,6 +63,16 @@ const char *kRunHeader =
     "corridor_constrained_piece_count,"
     "corridor_penalty_cost_initial,corridor_penalty_cost_final,"
     "max_corridor_violation_initial_m,max_corridor_violation_final_m,"
+    "initial_corridor_violating_face_sample_count,"
+    "final_corridor_violating_face_sample_count,"
+    "max_corridor_violation_initial_piece_id,"
+    "max_corridor_violation_initial_face_id,"
+    "max_corridor_violation_initial_sample_id,"
+    "max_corridor_violation_initial_time_ratio,"
+    "max_corridor_violation_final_piece_id,"
+    "max_corridor_violation_final_face_id,"
+    "max_corridor_violation_final_sample_id,"
+    "max_corridor_violation_final_time_ratio,"
     "final_corridor_enforcement_enabled,max_final_violation_allowed_m,"
     "corridor_enforcement_passes,corridor_penalty_weight_initial,"
     "corridor_penalty_weight_final,"
@@ -162,7 +172,7 @@ bool ExperimentLogger::ensureDirectory() const
 
 bool ExperimentLogger::appendRun(const ExperimentRunRecord &record) const
 {
-  const std::string path = directory_ + "/ego_runs_v18_drone_" +
+  const std::string path = directory_ + "/ego_runs_v19_drone_" +
                            std::to_string(record.drone_id) + ".csv";
   const bool header = fileNeedsHeader(path);
   std::ofstream output(path, std::ios::out | std::ios::app);
@@ -175,7 +185,7 @@ bool ExperimentLogger::appendRun(const ExperimentRunRecord &record) const
     output << kRunHeader << '\n';
   }
   output << std::setprecision(17)
-         << 18 << ',' << csv(record.run_id) << ','
+         << 19 << ',' << csv(record.run_id) << ','
          << csv(record.planning_event_id) << ',' << record.timestamp_s << ','
          << csv(record.experiment_tag) << ',' << record.drone_id << ','
          << record.goal_id << ',' << record.replan_id << ','
@@ -247,6 +257,7 @@ bool ExperimentLogger::appendRun(const ExperimentRunRecord &record) const
          << record.hard_spatial_variable_count << ','
          << record.hard_spatial_variable_overhead_ratio << ','
          << record.face_sample_pairs_per_evaluation << ','
+         << record.corridor_penalty_samples_per_piece << ','
          << record.max_junction_violation_initial_m << ','
          << record.max_junction_violation_final_m << ','
          << record.lbfgs_result << ',' << record.total_planning_ms << ','
@@ -268,6 +279,16 @@ bool ExperimentLogger::appendRun(const ExperimentRunRecord &record) const
          << record.corridor_penalty_cost_final << ','
          << record.max_corridor_violation_initial_m << ','
          << record.max_corridor_violation_final_m << ','
+         << record.initial_corridor_violating_face_sample_count << ','
+         << record.final_corridor_violating_face_sample_count << ','
+         << record.max_corridor_violation_initial_piece_id << ','
+         << record.max_corridor_violation_initial_face_id << ','
+         << record.max_corridor_violation_initial_sample_id << ','
+         << record.max_corridor_violation_initial_time_ratio << ','
+         << record.max_corridor_violation_final_piece_id << ','
+         << record.max_corridor_violation_final_face_id << ','
+         << record.max_corridor_violation_final_sample_id << ','
+         << record.max_corridor_violation_final_time_ratio << ','
          << record.final_corridor_enforcement_enabled << ','
          << record.max_final_violation_allowed_m << ','
          << record.corridor_enforcement_passes << ','
@@ -292,7 +313,7 @@ bool ExperimentLogger::appendCorridors(const ExperimentRunRecord &record,
   {
     return true;
   }
-  const std::string path = directory_ + "/ego_corridors_v18_drone_" +
+  const std::string path = directory_ + "/ego_corridors_v19_drone_" +
                            std::to_string(record.drone_id) + ".csv";
   const bool header = fileNeedsHeader(path);
   std::ofstream output(path, std::ios::out | std::ios::app);
@@ -308,7 +329,7 @@ bool ExperimentLogger::appendCorridors(const ExperimentRunRecord &record,
   for (const Corridor &corridor : corridors)
   {
     const CorridorMetrics &metrics = corridor.metrics;
-    output << 18 << ',' << csv(record.run_id) << ',' << record.timestamp_s << ','
+    output << 19 << ',' << csv(record.run_id) << ',' << record.timestamp_s << ','
            << csv(record.experiment_tag) << ',' << record.drone_id << ','
            << metrics.piece_id << ',' << csv(record.requested_method) << ','
            << csv(record.method) << ',' << metrics.face_count << ','

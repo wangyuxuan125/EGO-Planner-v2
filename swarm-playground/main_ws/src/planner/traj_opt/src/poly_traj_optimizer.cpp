@@ -2662,6 +2662,30 @@ namespace ego_planner
           initial_corridor_evaluation.max_violation_m;
       record.max_corridor_violation_final_m =
           final_corridor_evaluation.max_violation_m;
+      record.corridor_penalty_samples_per_piece =
+          tf_sfc_generated && !fallback_to_ego
+              ? std::max(tf_sfc_parameters_.samples_per_piece, 2)
+              : 0;
+      record.initial_corridor_violating_face_sample_count =
+          initial_corridor_evaluation.violating_face_sample_count;
+      record.final_corridor_violating_face_sample_count =
+          final_corridor_evaluation.violating_face_sample_count;
+      record.max_corridor_violation_initial_piece_id =
+          initial_corridor_evaluation.max_violation_piece_id;
+      record.max_corridor_violation_initial_face_id =
+          initial_corridor_evaluation.max_violation_face_id;
+      record.max_corridor_violation_initial_sample_id =
+          initial_corridor_evaluation.max_violation_sample_id;
+      record.max_corridor_violation_initial_time_ratio =
+          initial_corridor_evaluation.max_violation_time_ratio;
+      record.max_corridor_violation_final_piece_id =
+          final_corridor_evaluation.max_violation_piece_id;
+      record.max_corridor_violation_final_face_id =
+          final_corridor_evaluation.max_violation_face_id;
+      record.max_corridor_violation_final_sample_id =
+          final_corridor_evaluation.max_violation_sample_id;
+      record.max_corridor_violation_final_time_ratio =
+          final_corridor_evaluation.max_violation_time_ratio;
       record.final_corridor_enforcement_enabled =
           tf_sfc_generated && !fallback_to_ego &&
           tf_sfc_parameters_.enforce_final_corridor;
@@ -3822,7 +3846,16 @@ namespace ego_planner
 
     opt->initAndGetSmoothnessGradCost2PT(gradT, smoo_cost); // Smoothness cost
 
-    opt->addPVAJGradCost2CT(gradT, obs_swarm_feas_qvar_costs, opt->cps_num_prePiece_); // Time int cost
+    opt->addPVAJGradCost2CT(gradT, obs_swarm_feas_qvar_costs, opt->cps_num_prePiece_); // Original EGO time-integral costs
+    if (opt->tf_sfc_manager_ && !opt->tf_corridors_.empty())
+    {
+      // The optimizer and the strict final gate must see the same frozen
+      // corridor sample grid. Keep this separate from EGO's original control
+      // point count so the no-corridor baseline remains bit-for-bit unchanged.
+      opt->addCorridorGradCost2CT(
+          gradT, obs_swarm_feas_qvar_costs,
+          std::max(opt->tf_sfc_parameters_.samples_per_piece, 2));
+    }
 
     if (opt->allowRebound())
     {
@@ -3918,6 +3951,58 @@ namespace ego_planner
   }
 
   template <typename EIGENVEC>
+  void PolyTrajOptimizer::addCorridorGradCost2CT(
+      EIGENVEC &gdT, Eigen::VectorXd &costs, const int &K)
+  {
+    if (!tf_sfc_manager_ || tf_corridors_.empty() || K < 2)
+    {
+      return;
+    }
+
+    const int piece_count = gdT.size();
+    Eigen::Vector3d pos, vel, gradp;
+    Eigen::Matrix<double, 6, 1> beta0, beta1;
+    for (int piece_id = 0; piece_id < piece_count; ++piece_id)
+    {
+      const Eigen::Matrix<double, 6, 3> &coeff =
+          jerkOpt_.get_b().block<6, 3>(piece_id * 6, 0);
+      const double step = jerkOpt_.get_T1()(piece_id) /
+                          static_cast<double>(K);
+      for (int sample_id = 0; sample_id <= K; ++sample_id)
+      {
+        const double time = step * static_cast<double>(sample_id);
+        const double time2 = time * time;
+        const double time3 = time2 * time;
+        const double time4 = time2 * time2;
+        const double time5 = time4 * time;
+        beta0 << 1.0, time, time2, time3, time4, time5;
+        beta1 << 0.0, 1.0, 2.0 * time, 3.0 * time2,
+                 4.0 * time3, 5.0 * time4;
+        pos = coeff.transpose() * beta0;
+        vel = coeff.transpose() * beta1;
+
+        double sample_cost = 0.0;
+        if (!tf_sfc_manager_->corridorGradCost(
+                piece_id, pos, gradp, sample_cost))
+        {
+          continue;
+        }
+
+        const double alpha =
+            static_cast<double>(sample_id) / static_cast<double>(K);
+        const double quadrature_weight =
+            (sample_id == 0 || sample_id == K) ? 0.5 : 1.0;
+        jerkOpt_.get_gdC().block<6, 3>(piece_id * 6, 0) +=
+            quadrature_weight * step * beta0 * gradp.transpose();
+        gdT(piece_id) += quadrature_weight *
+                         (sample_cost / static_cast<double>(K) +
+                          step * alpha * gradp.dot(vel));
+        costs(4) += quadrature_weight * step * sample_cost;
+      }
+    }
+  }
+
+  template <typename EIGENVEC>
   void PolyTrajOptimizer::addPVAJGradCost2CT(EIGENVEC &gdT, Eigen::VectorXd &costs, const int &K)
   {
     //
@@ -3977,18 +4062,6 @@ namespace ego_planner
           jerkOpt_.get_gdC().block<6, 3>(i * 6, 0) += omg * step * gradViolaPc;
           gdT(i) += omg * (costp / K + step * gradViolaPt);
           costs(0) += omg * step * costp;
-        }
-
-        // Piece-wise frozen TF-SFC penalty. This is intentionally a soft
-        // constraint; the original fine collision check remains authoritative.
-        if (tf_sfc_manager_ && !tf_corridors_.empty() &&
-            tf_sfc_manager_->corridorGradCost(i, pos, gradp, costp))
-        {
-          gradViolaPc = beta0 * gradp.transpose();
-          gradViolaPt = alpha * gradp.transpose() * vel;
-          jerkOpt_.get_gdC().block<6, 3>(i * 6, 0) += omg * step * gradViolaPc;
-          gdT(i) += omg * (costp / K + step * gradViolaPt);
-          costs(4) += omg * step * costp;
         }
 
         // swarm

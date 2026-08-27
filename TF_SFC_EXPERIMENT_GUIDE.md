@@ -457,3 +457,31 @@ tf_sfc_experiment_tag:=liu_v18_clearance_astar
 ```
 
 v18 run 表新增 `clearance_astar_attempted`、`clearance_astar_success`、`clearance_astar_call_count` 和 `clearance_astar_ms`，并修复成功记录未复制 v17 clearance-retry provenance 的问题。正式统计应把 occupancy-A* 与 clearance-A* 作为前端消融，同时只在共享 seed 成功的条件下比较 Liu 与 TF-SFC 的 corridor geometry。
+
+
+## EGO schema-v19: optimizer/certifier sampling consistency
+
+Schema v19 fixes a scientific-validity issue exposed by the v18 hard-goal
+regression. The strict final corridor gate used `tf_sfc/samples_per_piece`
+(default 8), while the L-BFGS corridor penalty was evaluated only on EGO's
+`optimization/constraint_points_perPiece` grid (default 5). A polynomial
+could therefore violate a face at a sample visible to the final gate but
+invisible to the optimizer.
+
+The corridor penalty now has its own quadrature loop with exactly
+`tf_sfc/samples_per_piece + 1` samples per constrained piece. Original EGO
+obstacle, swarm and feasibility costs retain their original grid, so
+`tf_sfc_enabled:=false` is unchanged. TF-SFC and EllipsoidDecomp use the
+same corridor grid for a fair comparison.
+
+New run columns identify the actual grid and the worst sampled violation:
+
+- `corridor_penalty_samples_per_piece`;
+- initial/final violating face-sample counts;
+- initial/final worst piece, face, sample, and normalized time ratio.
+
+The first v19 regression should repeat the same map seed 42 and goal
+`[15.04, -0.05, 1.0]` for both `tf_sfc` and `ellipsoid_decomp`. Compare
+optimizer-call success, longest failure streak, final violating face-sample
+count, and planning-time percentiles against v18. Do not treat replanning
+calls as independent trials.

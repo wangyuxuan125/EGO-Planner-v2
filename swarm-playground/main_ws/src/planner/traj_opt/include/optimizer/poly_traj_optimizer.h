@@ -204,6 +204,11 @@ namespace ego_planner
     void initAndGetSmoothnessGradCost2PT(EIGENVEC &gdT, double &cost);
 
     template <typename EIGENVEC>
+    void addCorridorGradCost2CT(EIGENVEC &gdT,
+                                Eigen::VectorXd &costs,
+                                const int &K);
+
+    template <typename EIGENVEC>
     void addPVAJGradCost2CT(EIGENVEC &gdT, Eigen::VectorXd &costs, const int &K);
 
     bool obstacleGradCostP(const int i_dp,

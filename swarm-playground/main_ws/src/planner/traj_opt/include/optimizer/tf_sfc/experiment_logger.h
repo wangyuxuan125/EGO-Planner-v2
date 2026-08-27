@@ -98,6 +98,7 @@ struct ExperimentRunRecord
   // Number of valid (face, trajectory-sample) pairs in one corridor
   // constraint/penalty evaluation, excluding optimizer iteration count.
   int face_sample_pairs_per_evaluation = 0;
+  int corridor_penalty_samples_per_piece = 0;
   double max_junction_violation_initial_m = 0.0;
   double max_junction_violation_final_m = 0.0;
   int lbfgs_result = 0;
@@ -127,6 +128,16 @@ struct ExperimentRunRecord
   double corridor_penalty_cost_final = 0.0;
   double max_corridor_violation_initial_m = 0.0;
   double max_corridor_violation_final_m = 0.0;
+  int initial_corridor_violating_face_sample_count = 0;
+  int final_corridor_violating_face_sample_count = 0;
+  int max_corridor_violation_initial_piece_id = -1;
+  int max_corridor_violation_initial_face_id = -1;
+  int max_corridor_violation_initial_sample_id = -1;
+  double max_corridor_violation_initial_time_ratio = 0.0;
+  int max_corridor_violation_final_piece_id = -1;
+  int max_corridor_violation_final_face_id = -1;
+  int max_corridor_violation_final_sample_id = -1;
+  double max_corridor_violation_final_time_ratio = 0.0;
   bool final_corridor_enforcement_enabled = false;
   double max_final_violation_allowed_m = 0.0;
   int corridor_enforcement_passes = 0;
