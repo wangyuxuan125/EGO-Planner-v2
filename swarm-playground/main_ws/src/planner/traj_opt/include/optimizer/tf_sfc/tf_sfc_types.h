@@ -101,6 +101,9 @@ struct Parameters
   bool use_soft_penalty = false;
   bool allow_partial_corridors = true;
   bool allow_ego_fallback = true;
+  // When false, the requested direction provider must succeed. Formal
+  // sensitivity experiments use this gate to prevent silent PCA/Frenet reuse.
+  bool allow_direction_fallback = true;
   bool enforce_final_corridor = true;
   bool hard_corridor_parameterization = true;
   bool decomp_retry_seed_validation_without_velocity = true;
@@ -182,6 +185,9 @@ struct CorridorMetrics
       std::numeric_limits<double>::quiet_NaN();
   bool valid = false;
   bool direction_fallback = false;
+  int requested_direction_mode = static_cast<int>(DirectionMode::PCA);
+  // -1 means no direction was produced (e.g. an upstream or provider failure).
+  int used_direction_mode = -1;
   FailureReason failure_reason = FailureReason::NONE;
 };
 
