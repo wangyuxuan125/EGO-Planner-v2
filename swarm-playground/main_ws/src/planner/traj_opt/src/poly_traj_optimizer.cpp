@@ -1583,22 +1583,21 @@ namespace ego_planner
           failed.metrics.failure_reason = tf_sfc::FailureReason::DECOMP_UTIL_UNAVAILABLE;
           tf_corridors_.push_back(failed);
         }
-        else if (!buildFixedPieceSeedPathWithClearanceRetry(grid_map_, a_star_, iniState.col(0),
-                                          iniState.col(1), finState.col(0), piece_num_,
-                                          tf_sfc_parameters_.allow_partial_corridors,
-                                          tf_sfc_parameters_.min_valid_pieces,
-                                          tf_sfc_parameters_.min_overlap_radius,
-                tf_sfc_parameters_.junction_refine_radius,
-                tf_sfc_parameters_.junction_refine_step,
-                                          tf_sfc_parameters_.decomp_initial_velocity_segment,
-                                          tf_sfc_parameters_.decomp_initial_velocity_threshold,
-                                          tf_sfc_parameters_.decomp_degenerate_seed_length,
-                                          tf_sfc_parameters_
-                                              .seed_retry_without_velocity_on_clearance_failure,
-                                          seed_path, covered_piece_num,
-                                          uncovered_failure_reason,
-                                          seed_failure_reason,
-                                          seed_path_build_info))
+        else if (!buildFixedPieceSeedPathWithClearanceRetry(
+                     grid_map_, a_star_, iniState.col(0), iniState.col(1),
+                     finState.col(0), piece_num_,
+                     tf_sfc_parameters_.allow_partial_corridors,
+                     tf_sfc_parameters_.min_valid_pieces,
+                     tf_sfc_parameters_.min_overlap_radius,
+                     tf_sfc_parameters_.junction_refine_radius,
+                     tf_sfc_parameters_.junction_refine_step,
+                     tf_sfc_parameters_.decomp_initial_velocity_segment,
+                     tf_sfc_parameters_.decomp_initial_velocity_threshold,
+                     tf_sfc_parameters_.decomp_degenerate_seed_length,
+                     tf_sfc_parameters_
+                         .seed_retry_without_velocity_on_clearance_failure,
+                     seed_path, covered_piece_num, uncovered_failure_reason,
+                     seed_failure_reason, seed_path_build_info))
         {
           tf_sfc::Corridor failed;
           failed.metrics.piece_id = 0;
