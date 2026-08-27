@@ -107,9 +107,12 @@ struct Parameters
   bool enforce_final_corridor = true;
   bool hard_corridor_parameterization = true;
   bool decomp_retry_seed_validation_without_velocity = true;
-  // Shared by TF-SFC and EllipsoidDecomp: if a velocity-prefixed seed fails
-  // clearance/corner certification, rebuild it once with ordinary A*.
+  // Shared by TF-SFC and EllipsoidDecomp. On a certified-seed clearance
+  // failure, retry once without the velocity prefix. When enabled, the retry
+  // rejects clearance-invalid A* edges globally instead of relying on a local
+  // post-search detour.
   bool seed_retry_without_velocity_on_clearance_failure = true;
+  bool seed_clearance_astar_enabled = true;
   bool visualization_enabled = true;
   bool log_enabled = true;
   std::string visualization_frame = "world";
@@ -152,6 +155,7 @@ struct Parameters
   double decomp_initial_velocity_segment = 0.40;
   double decomp_initial_velocity_threshold = 0.20;
   double decomp_degenerate_seed_length = 0.10;
+  double seed_clearance_astar_time_limit = 0.20;
 };
 
 struct DirectionSet
