@@ -39,12 +39,13 @@ EGO-Planner-v2's original rebound, restart, swarm, and final collision-check pat
   MINCO piece budget, the optimizer keeps a certified prefix and labels the
   unconstrained final segment `piece_budget_tail` instead of rapidly rejecting
   every replan.
-- Schema-v13 experiment logs group optimizer calls by goal/replan/attempt,
-  record the effective local planning start/target, sampled corridor penalty
-  and maximum violation before and after L-BFGS, and expose bounded
-  penalty-continuation passes plus strict final rejection. Per-corridor rows
-  also record the number of inflation-candidate evaluations so runtime changes
-  can be attributed without mixing corridor construction and optimization.
+- Schema-v14 experiment logs group optimizer calls by goal/replan/attempt
+  and separately record the commanded global GoalSet and the effective local
+  planning start/target. They retain sampled corridor penalties, strict final
+  rejection, and per-corridor inflation-candidate evaluation counts. Seed
+  clearance/repair failures are labelled separately from true corridor-overlap
+  failures so front-end and corridor-generation robustness can be reported
+  independently.
 - Configurable EGO fallback. Operational launches may allow fallback; strict
   experiments can reject generation failures instead of silently counting an
   original-EGO result as TF-SFC success.
