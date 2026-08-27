@@ -163,6 +163,7 @@ struct CorridorMetrics
   int face_count = 0;
   int obstacle_face_count = 0;
   int obstacle_point_count = 0;
+  int inflation_candidate_evaluation_count = 0;
   bool face_budget_saturated = false;
   double generation_time_ms = 0.0;
   double weighted_width = 0.0;
