@@ -66,6 +66,8 @@
     <arg name="tf_sfc_decomp_degenerate_seed_length" default="0.10"/>
     <arg name="tf_sfc_decomp_retry_seed_validation_without_velocity" default="true"/>
     <arg name="tf_sfc_seed_retry_without_velocity_on_clearance_failure" default="true"/>
+    <arg name="tf_sfc_seed_clearance_astar_enabled" default="true"/>
+    <arg name="tf_sfc_seed_clearance_astar_time_limit" default="0.20"/>
     <!-- main algorithm params -->
     <include file="$(find ego_planner)/launch/include/advanced_param.xml">
         <arg name="drone_id" value="$(arg drone_id)"/>
@@ -133,6 +135,8 @@
         <arg name="tf_sfc_decomp_degenerate_seed_length" value="$(arg tf_sfc_decomp_degenerate_seed_length)"/>
         <arg name="tf_sfc_decomp_retry_seed_validation_without_velocity" value="$(arg tf_sfc_decomp_retry_seed_validation_without_velocity)"/>
         <arg name="tf_sfc_seed_retry_without_velocity_on_clearance_failure" value="$(arg tf_sfc_seed_retry_without_velocity_on_clearance_failure)"/>
+        <arg name="tf_sfc_seed_clearance_astar_enabled" value="$(arg tf_sfc_seed_clearance_astar_enabled)"/>
+        <arg name="tf_sfc_seed_clearance_astar_time_limit" value="$(arg tf_sfc_seed_clearance_astar_time_limit)"/>
         <!-- 1: use 2D Nav Goal to select goal  -->
         <!-- 2: use global waypoints below  -->
         <arg name="flight_type" value="$(arg flight_type)" />
