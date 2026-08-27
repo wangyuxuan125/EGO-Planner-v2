@@ -56,6 +56,14 @@ namespace ego_planner
     inline void setExperimentGoalId(const std::uint64_t goal_id)
     {
       experiment_goal_id_ = goal_id;
+      experiment_commanded_goal_valid_ = false;
+    }
+    inline void setExperimentGoal(const std::uint64_t goal_id,
+                                  const Eigen::Vector3d &commanded_goal)
+    {
+      experiment_goal_id_ = goal_id;
+      experiment_commanded_goal_ = commanded_goal;
+      experiment_commanded_goal_valid_ = commanded_goal.allFinite();
     }
     // inline PtsChk_t getPtsCheck(void) { return ploy_traj_opt_->get_pts_check_(); }
 
@@ -71,6 +79,8 @@ namespace ego_planner
     int continous_failures_count_{0};
     std::uint64_t experiment_goal_id_{0};
     std::uint64_t experiment_replan_sequence_{0};
+    Eigen::Vector3d experiment_commanded_goal_{Eigen::Vector3d::Zero()};
+    bool experiment_commanded_goal_valid_{false};
 
   public:
     typedef unique_ptr<EGOPlannerManager> Ptr;
