@@ -52,8 +52,13 @@ struct ExperimentRunRecord
   double seed_path_length_m = 0.0;
   bool seed_path_edge_valid = false;
   double seed_path_coverage_ratio = 0.0;
+  bool seed_frontend_evaluated = false;
+  bool seed_frontend_success = false;
+  bool corridor_generation_attempted = false;
   bool tf_sfc_enabled = false;
   int direction_mode = 1;
+  int used_direction_mode = -1;
+  bool direction_fallback_allowed = true;
   bool success = false;
   bool collision_free = false;
   bool final_obstacle_collision = false;
@@ -66,7 +71,13 @@ struct ExperimentRunRecord
   bool hard_parameterization_active = false;
   int hard_constrained_junction_count = 0;
   int hard_total_junction_count = 0;
+  int direct_spatial_variable_count = 0;
   int hard_spatial_variable_count = 0;
+  // hard/direct; meaningful when hard_parameterization_active is true.
+  double hard_spatial_variable_overhead_ratio = 0.0;
+  // Number of valid (face, trajectory-sample) pairs in one corridor
+  // constraint/penalty evaluation, excluding optimizer iteration count.
+  int face_sample_pairs_per_evaluation = 0;
   double max_junction_violation_initial_m = 0.0;
   double max_junction_violation_final_m = 0.0;
   int lbfgs_result = 0;
