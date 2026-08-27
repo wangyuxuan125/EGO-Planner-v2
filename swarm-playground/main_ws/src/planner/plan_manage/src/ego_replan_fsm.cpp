@@ -505,7 +505,7 @@ namespace ego_planner
   bool EGOReplanFSM::planNextWaypoint(const Eigen::Vector3d next_wp)
   {
     ++experiment_goal_id_;
-    planner_manager_->setExperimentGoalId(experiment_goal_id_);
+    planner_manager_->setExperimentGoal(experiment_goal_id_, next_wp);
     bool success = false;
     std::vector<Eigen::Vector3d> one_pt_wps;
     one_pt_wps.push_back(next_wp);
