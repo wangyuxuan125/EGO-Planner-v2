@@ -221,7 +221,21 @@ roslaunch ego_planner single_drone_interactive.launch \
   tf_sfc_experiment_tag:=pca_scene_01
 ```
 
-启动后，在 RViz 中使用 `2D Nav Goal` 设置目标。为了公平比较，方法之间应保持地图 seed、起终点、速度/加速度限制和重复次数一致。
+启动后，在 RViz 中使用 `3D Goal Set` 设置目标。仿真启动文件通过
+`advanced_param.xml` 将规划器源码中的 `/goal` 重映射为
+`/goal_with_id`，因此命令行测试必须发布到后者：
+
+```bash
+rostopic info /goal_with_id
+rostopic pub -1 /goal_with_id quadrotor_msgs/GoalSet \
+  "drone_id: 0
+goal: [15.04, -0.05, 1.0]"
+```
+
+只有当 `rostopic info /goal_with_id` 列出
+`/drone_0_ego_planner_node`，且规划终端打印完整的
+`Received goal: x, y, z` 后，该目标才算实际下发。为了公平比较，方法之间应
+保持地图 seed、三维起终点、速度/加速度限制和重复次数一致。
 
 ### RViz 走廊显示
 
@@ -244,13 +258,13 @@ rostopic echo -n 1 /drone_0_ego_planner_node/tf_sfc/polyhedron_array
 默认输出：
 
 ```text
-$HOME/tf_sfc_results/ego/ego_runs_v12_drone_0.csv
-$HOME/tf_sfc_results/ego/ego_corridors_v12_drone_0.csv
+$HOME/tf_sfc_results/ego/ego_runs_v14_drone_0.csv
+$HOME/tf_sfc_results/ego/ego_corridors_v14_drone_0.csv
 ```
 
-- `ego_runs_v12_drone_<id>.csv`：每次优化候选调用一行。`planning_event_id` 标识一次重规划事件，`retry_index` 表示同一目标下连续失败后的重试序号，`attempt_id` 只表示多拓扑候选，三者不能混用。
+- `ego_runs_v14_drone_<id>.csv`：每次优化候选调用一行。`planning_event_id` 标识一次重规划事件，`retry_index` 表示同一目标下连续失败后的重试序号，`attempt_id` 只表示多拓扑候选，三者不能混用。全局输入由 `commanded_goal_{x,y,z}_m` 记录，每次滚动规划实际使用的局部目标由 `planning_target_{x,y,z}_m` 记录；目标对比必须以前者分组。
 - 搜索阶段单独记录 `astar_search_attempted/success/call_count/ms`、原始 A* 路径点数/长度、最终 seed 点数/长度、连续边有效性和局部地图覆盖率。`seed_path_build_ms` 包含搜索、视线简化和 piece 对齐；`corridor_inflation_ms` 单独记录区域生成调用；两者仍包含在 `corridor_generation_ms` 和 `total_planning_ms` 内。
-- `ego_corridors_v12_drone_<id>.csv`：每个轨迹分段一行。EllipsoidDecomp 额外记录种子包含是否被评估、是否完整包含线段以及最大归一化半空间违反量。由于多面体是凸集，只要两个端点位于多面体内，整条线 seed 就位于多面体内。
+- `ego_corridors_v14_drone_<id>.csv`：每个轨迹分段一行，并记录 `inflation_candidate_evaluation_count`。EllipsoidDecomp 额外记录种子包含是否被评估、是否完整包含线段以及最大归一化半空间违反量。由于多面体是凸集，只要两个端点位于多面体内，整条线 seed 就位于多面体内。
 - 最终安全失败继续拆分为 `obstacle_collision_failure`、`swarm_clearance_failure` 和走廊违反；硬连接点与采样曲线违反量保持独立。
 
 文件使用追加模式。不要在同一标签下混入不同地图或参数；每个场景应使用独立目录或唯一 `tf_sfc_experiment_tag`。
@@ -258,8 +272,8 @@ $HOME/tf_sfc_results/ego/ego_corridors_v12_drone_0.csv
 快速查看：
 
 ```bash
-head -n 5 $HOME/tf_sfc_results/ego/ego_runs_v12_drone_0.csv
-head -n 5 $HOME/tf_sfc_results/ego/ego_corridors_v12_drone_0.csv
+head -n 5 $HOME/tf_sfc_results/ego/ego_runs_v14_drone_0.csv
+head -n 5 $HOME/tf_sfc_results/ego/ego_corridors_v14_drone_0.csv
 ```
 
 ## 4. 当前可用于论文统计的字段
@@ -279,7 +293,7 @@ head -n 5 $HOME/tf_sfc_results/ego/ego_corridors_v12_drone_0.csv
 
 ```bash
 python3 tools/analyze_tf_sfc_v9.py \
-  $HOME/tf_sfc_results/ego/ego_runs_v12_drone_0.csv
+  $HOME/tf_sfc_results/ego/ego_runs_v14_drone_0.csv
 ```
 
 输出中的 `optimizer-call success` 仅为诊断项；论文主表应优先使用独立场景/目标上的系统结果、固定 seed 输入的走廊结果，以及有效走廊条件下的后端结果。工具给出的 “goals with >=1 successful plan” 也不是目标到达率。
