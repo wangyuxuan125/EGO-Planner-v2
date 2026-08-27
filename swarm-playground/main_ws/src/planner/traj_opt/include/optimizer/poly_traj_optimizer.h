@@ -96,6 +96,8 @@ namespace ego_planner
     std::uint64_t experiment_replan_id_{0};
     int experiment_retry_index_{0};
     int experiment_attempt_id_{0};
+    Eigen::Vector3d experiment_commanded_goal_{Eigen::Vector3d::Zero()};
+    bool experiment_commanded_goal_valid_{false};
     struct MultitopologyData_t
     {
       bool use_multitopology_trajs{false}; 
@@ -143,7 +145,9 @@ namespace ego_planner
     void setExperimentContext(std::uint64_t goal_id,
                               std::uint64_t replan_id,
                               int retry_index,
-                              int attempt_id);
+                              int attempt_id,
+                              const Eigen::Vector3d &commanded_goal,
+                              bool commanded_goal_valid);
     void setConstraintPoints(ConstraintPoints cps);
     void setUseMultitopologyTrajs(bool use_multitopology_trajs);
 
