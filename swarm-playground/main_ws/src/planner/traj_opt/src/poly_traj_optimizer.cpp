@@ -366,7 +366,7 @@ bool findClearanceLocalDetour(
                dimensions.x() +
            local.x();
   };
-  const auto gridIndex = [&](const int linear) {
+  const auto gridIndex = [&](const int linear) -> Eigen::Vector3i {
     int remainder = linear;
     const int x = remainder % dimensions.x();
     remainder /= dimensions.x();
@@ -374,7 +374,8 @@ bool findClearanceLocalDetour(
     const int z = remainder / dimensions.y();
     return lower + Eigen::Vector3i(x, y, z);
   };
-  const auto position = [&](const Eigen::Vector3i &index) {
+  const auto position =
+      [&](const Eigen::Vector3i &index) -> Eigen::Vector3d {
     if ((index - start_index).squaredNorm() == 0)
     {
       return start;
