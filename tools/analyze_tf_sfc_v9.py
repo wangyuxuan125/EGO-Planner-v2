@@ -80,7 +80,49 @@ def sessionize(rows):
     return annotated
 
 
-def summarize(tag, rows):
+def closed_loop_regressions(rows, threshold):
+    """Measure motion opposite each session's fixed start-to-goal axis."""
+    annotated = sessionize(rows)
+    sessions = defaultdict(list)
+    for session_id, row in annotated:
+        sessions[session_id].append(row)
+    regressions = []
+    transition_count = 0
+    for group in sessions.values():
+        if len(group) < 2:
+            continue
+        first = group[0]
+        start = [as_float(first, f"planning_start_{axis}_m")
+                 for axis in "xyz"]
+        goal = [as_float(first, f"commanded_goal_{axis}_m")
+                for axis in "xyz"]
+        direction = [goal[i] - start[i] for i in range(3)]
+        norm = math.sqrt(sum(value * value for value in direction))
+        if not math.isfinite(norm) or norm <= 1.0e-9:
+            continue
+        direction = [value / norm for value in direction]
+        for current, following in zip(group, group[1:]):
+            if not as_bool(current, "success"):
+                continue
+            current_position = [
+                as_float(current, f"planning_start_{axis}_m")
+                for axis in "xyz"
+            ]
+            following_position = [
+                as_float(following, f"planning_start_{axis}_m")
+                for axis in "xyz"
+            ]
+            delta = sum((following_position[i] - current_position[i]) *
+                        direction[i] for i in range(3))
+            if not math.isfinite(delta):
+                continue
+            transition_count += 1
+            if delta < -threshold:
+                regressions.append(-delta)
+    return transition_count, regressions
+
+
+def summarize(tag, rows, progress_regression_threshold):
     events = defaultdict(list)
     goals = defaultdict(list)
     annotated = sessionize(rows)
@@ -143,6 +185,14 @@ def summarize(tag, rows):
     retry_rows = sum(int(float(row.get("retry_index", "0") or 0)) > 0
                      for row in rows)
     print(f"retry calls: {retry_rows}/{len(rows)}")
+    progress_transitions, progress_regressions = closed_loop_regressions(
+        rows, progress_regression_threshold
+    )
+    print(
+        f"closed-loop regressions >{progress_regression_threshold:.3f} m "
+        f"after success: {len(progress_regressions)}/{progress_transitions}; "
+        f"max={max(progress_regressions, default=0.0):.3f} m"
+    )
     if "seed_minco_alignment_valid" in rows[0]:
         evaluated_alignment = [
             row for row in rows if as_int(row, "seed_piece_count") > 0
@@ -184,6 +234,12 @@ def summarize(tag, rows):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("runs_csv")
+    parser.add_argument(
+        "--max-progress-regression",
+        type=float,
+        default=0.05,
+        help="closed-loop reverse-motion threshold in metres (default: 0.05)",
+    )
     args = parser.parse_args()
 
     with open(args.runs_csv, newline="") as stream:
@@ -192,12 +248,14 @@ def main():
         raise SystemExit("empty run CSV")
     if "planning_event_id" not in rows[0] or "retry_index" not in rows[0]:
         raise SystemExit("schema-v9+ CSV required")
+    if args.max_progress_regression < 0.0:
+        raise SystemExit("--max-progress-regression must be non-negative")
 
     groups = defaultdict(list)
     for row in rows:
         groups[row.get("experiment_tag", "unknown")].append(row)
     for tag in sorted(groups):
-        summarize(tag, groups[tag])
+        summarize(tag, groups[tag], args.max_progress_regression)
 
 
 if __name__ == "__main__":
