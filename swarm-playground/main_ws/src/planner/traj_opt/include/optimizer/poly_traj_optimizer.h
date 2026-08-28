@@ -5,7 +5,12 @@
 #include <path_searching/dyn_a_star.h>
 #include <plan_env/grid_map.h>
 #include <ros/ros.h>
+#include <cstdint>
+#include <memory>
 #include "optimizer/lbfgs.hpp"
+#include "optimizer/tf_sfc/experiment_logger.h"
+#include "optimizer/tf_sfc/hard_corridor_parameterization.h"
+#include "optimizer/tf_sfc/tf_sfc_manager.h"
 #include <traj_utils/plan_container.hpp>
 #include "poly_traj_utils.hpp"
 
@@ -70,15 +75,29 @@ namespace ego_planner
     poly_traj::MinJerkOpt jerkOpt_;
     SwarmTrajData *swarm_trajs_{NULL}; // Can not use shared_ptr and no need to free
     ConstraintPoints cps_;
+    tf_sfc::Parameters tf_sfc_parameters_;
+    std::shared_ptr<tf_sfc::TfSfcManager> tf_sfc_manager_;
+    std::unique_ptr<tf_sfc::ExperimentLogger> tf_sfc_experiment_logger_;
+    tf_sfc::CorridorVector tf_corridors_;
+    tf_sfc::HardCorridorParameterization hard_corridor_parameterization_;
+    ros::Publisher tf_sfc_polyhedron_pub_;
     // PtsChk_t pts_check_;
 
     int drone_id_;
     int cps_num_prePiece_;   // number of distinctive constraint points each piece
     int variable_num_;       // optimization variables
+    int spatial_variable_num_{0}; // direct or hard-parameterized junction variables
+    bool hard_parameterization_active_{false};
     int piece_num_;          // poly traj piece numbers
     int iter_num_;           // iteration of the solver
     std::vector<double> min_ellip_dist2_; // min trajectory distance in swarm
     bool touch_goal_;
+    std::uint64_t experiment_goal_id_{0};
+    std::uint64_t experiment_replan_id_{0};
+    int experiment_retry_index_{0};
+    int experiment_attempt_id_{0};
+    Eigen::Vector3d experiment_commanded_goal_{Eigen::Vector3d::Zero()};
+    bool experiment_commanded_goal_valid_{false};
     struct MultitopologyData_t
     {
       bool use_multitopology_trajs{false}; 
@@ -103,6 +122,8 @@ namespace ego_planner
 
     double t_now_;
 
+    void publishTfSfcCorridors(const tf_sfc::CorridorVector &corridors);
+
   public:
     PolyTrajOptimizer() {}
     ~PolyTrajOptimizer() {}
@@ -121,12 +142,19 @@ namespace ego_planner
     void setSwarmTrajs(SwarmTrajData *swarm_trajs_ptr);
     void setDroneId(const int drone_id);
     void setIfTouchGoal(const bool touch_goal);
+    void setExperimentContext(std::uint64_t goal_id,
+                              std::uint64_t replan_id,
+                              int retry_index,
+                              int attempt_id,
+                              const Eigen::Vector3d &commanded_goal,
+                              bool commanded_goal_valid);
     void setConstraintPoints(ConstraintPoints cps);
     void setUseMultitopologyTrajs(bool use_multitopology_trajs);
 
     /* helper functions */
     inline const ConstraintPoints &getControlPoints(void) { return cps_; }
     inline const poly_traj::MinJerkOpt &getMinJerkOpt(void) { return jerkOpt_; }
+    inline const tf_sfc::CorridorVector &getTfSfcCorridors(void) const { return tf_corridors_; }
     inline int get_cps_num_prePiece_(void) { return cps_num_prePiece_; }
     inline double get_swarm_clearance_(void) { return swarm_clearance_; }
 
@@ -174,6 +202,11 @@ namespace ego_planner
     /* gradient and cost evaluation functions */
     template <typename EIGENVEC>
     void initAndGetSmoothnessGradCost2PT(EIGENVEC &gdT, double &cost);
+
+    template <typename EIGENVEC>
+    void addCorridorGradCost2CT(EIGENVEC &gdT,
+                                Eigen::VectorXd &costs,
+                                const int &K);
 
     template <typename EIGENVEC>
     void addPVAJGradCost2CT(EIGENVEC &gdT, Eigen::VectorXd &costs, const int &K);

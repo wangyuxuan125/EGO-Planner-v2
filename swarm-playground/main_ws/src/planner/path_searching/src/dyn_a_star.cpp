@@ -1,4 +1,5 @@
 #include "path_searching/dyn_a_star.h"
+#include "plan_env/raycast.h"
 
 using namespace std;
 using namespace Eigen;
@@ -139,7 +140,12 @@ bool AStar::ConvertToIndexAndAdjustStartEndPoints(Vector3d start_pt, Vector3d en
     return true;
 }
 
-ASTAR_RET AStar::AstarSearch(const double step_size, Vector3d start_pt, Vector3d end_pt)
+ASTAR_RET AStar::AstarSearch(const double step_size, Vector3d start_pt,
+                            Vector3d end_pt,
+                            const bool restrict_to_inflated_map,
+                            const bool validate_continuous_edges,
+                            const EdgeValidator &edge_validator,
+                            const double time_limit_s)
 {
     ros::Time time_1 = ros::Time::now();
     ++rounds_;
@@ -147,6 +153,7 @@ ASTAR_RET AStar::AstarSearch(const double step_size, Vector3d start_pt, Vector3d
     step_size_ = step_size;
     inv_step_size_ = 1 / step_size;
     center_ = (start_pt + end_pt) / 2;
+    restrict_to_inflated_map_ = restrict_to_inflated_map;
 
     Vector3i start_idx, end_idx;
     if (!ConvertToIndexAndAdjustStartEndPoints(start_pt, end_pt, start_idx, end_idx))
@@ -154,6 +161,38 @@ ASTAR_RET AStar::AstarSearch(const double step_size, Vector3d start_pt, Vector3d
         ROS_ERROR("Unable to handle the initial or end point, force return!");
         return ASTAR_RET::INIT_ERR;
     }
+
+    const auto continuousEdgeIsFree =
+        [&](const Vector3d &edge_start, const Vector3d &edge_end)
+    {
+        if (!validate_continuous_edges)
+        {
+            return true;
+        }
+        if (checkOccupancy(edge_start) != 0 ||
+            checkOccupancy(edge_end) != 0)
+        {
+            return false;
+        }
+        const double map_resolution = grid_map_->getResolution();
+        const double map_resolution_inv = 1.0 / map_resolution;
+        RayCaster raycaster;
+        Vector3d voxel;
+        if (raycaster.setInput(edge_start * map_resolution_inv,
+                               edge_end * map_resolution_inv))
+        {
+            while (raycaster.step(voxel))
+            {
+                const Vector3d voxel_center =
+                    ((voxel.array() + 0.5) * map_resolution).matrix();
+                if (checkOccupancy(voxel_center) != 0)
+                {
+                    return false;
+                }
+            }
+        }
+        return true;
+    };
 
     // if ( start_pt(0) > -1 && start_pt(0) < 0 )
     //     cout << "start_pt=" << start_pt.transpose() << " end_pt=" << end_pt.transpose() << endl;
@@ -227,12 +266,20 @@ ASTAR_RET AStar::AstarSearch(const double step_size, Vector3d start_pt, Vector3d
                         continue; //in closed set.
                     }
 
-                    neighborPtr->rounds = rounds_;
-
-                    if (checkOccupancy(Index2Coord(neighborPtr->index)))
+                    const Vector3d current_coord =
+                        Index2Coord(current->index);
+                    const Vector3d neighbor_coord =
+                        Index2Coord(neighborPtr->index);
+                    if (checkOccupancy(neighbor_coord) ||
+                        !continuousEdgeIsFree(current_coord, neighbor_coord) ||
+                        (edge_validator &&
+                         !edge_validator(current_coord, neighbor_coord)))
                     {
                         continue;
                     }
+                    // An edge rejected from one parent must not mark the node as
+                    // explored; another parent may still reach it safely.
+                    neighborPtr->rounds = rounds_;
 
                     double static_cost = sqrt(dx * dx + dy * dy + dz * dz);
                     tentative_gScore = current->gScore + static_cost;
@@ -254,9 +301,11 @@ ASTAR_RET AStar::AstarSearch(const double step_size, Vector3d start_pt, Vector3d
                     }
                 }
         ros::Time time_2 = ros::Time::now();
-        if ((time_2 - time_1).toSec() > 0.2)
+        if (time_limit_s > 0.0 &&
+            (time_2 - time_1).toSec() > time_limit_s)
         {
-            ROS_WARN("Failed in A star path searching !!! 0.2 seconds time limit exceeded.");
+            ROS_WARN("Failed in A star path searching: %.3f second time limit exceeded.",
+                     time_limit_s);
             return ASTAR_RET::SEARCH_ERR;
         }
     }

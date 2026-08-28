@@ -18,6 +18,7 @@
 #include <quadrotor_msgs/GoalSet.h>
 #include <traj_utils/DataDisp.h>
 #include <plan_manage/planner_manager.h>
+#include <cstdint>
 #include <traj_utils/planning_visualization.h>
 #include <traj_utils/PolyTraj.h>
 #include <traj_utils/MINCOTraj.h>
@@ -38,6 +39,7 @@ namespace ego_planner
     EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 
   private:
+    std::uint64_t experiment_goal_id_{0};
     /* ---------- flag ---------- */
     enum FSM_EXEC_STATE
     {

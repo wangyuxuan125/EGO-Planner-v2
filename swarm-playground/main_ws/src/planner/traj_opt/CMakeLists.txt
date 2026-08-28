@@ -20,6 +20,27 @@ find_package(catkin REQUIRED COMPONENTS
   path_searching
 )
 
+# DecompROS is optional: the planner still builds and logs TF-SFC metrics when
+# it is absent. When decomp_ros_msgs is sourced, publish PolyhedronArray data
+# for the DecompROS RViz plugin.
+find_package(decomp_ros_msgs QUIET)
+if(decomp_ros_msgs_FOUND)
+  add_definitions(-DTF_SFC_WITH_DECOMP_ROS)
+  message(STATUS "traj_opt: DecompROS corridor visualization enabled")
+else()
+  message(STATUS "traj_opt: decomp_ros_msgs not found; corridor visualization disabled")
+endif()
+
+# DecompROS above only supplies messages/RViz display. DecompUtil is the
+# optional algorithm dependency for the Liu et al. (ICRA 2017) baseline.
+find_package(decomp_util QUIET)
+if(decomp_util_FOUND)
+  add_definitions(-DTF_SFC_WITH_DECOMP_UTIL)
+  message(STATUS "traj_opt: Liu/DecompUtil corridor baseline enabled")
+else()
+  message(STATUS "traj_opt: decomp_util not found; ellipsoid_decomp unavailable")
+endif()
+
 catkin_package(
  INCLUDE_DIRS include
  LIBRARIES traj_opt
@@ -31,13 +52,24 @@ include_directories(
     SYSTEM 
     include 
     ${catkin_INCLUDE_DIRS}
+    ${decomp_ros_msgs_INCLUDE_DIRS}
+    ${DECOMP_UTIL_INCLUDE_DIRS}
     ${Eigen3_INCLUDE_DIRS} 
     ${PCL_INCLUDE_DIRS}
 )
 
 add_library( traj_opt 
-    src/poly_traj_optimizer.cpp 
+    src/poly_traj_optimizer.cpp
+    src/tf_sfc/direction_provider.cpp
+    src/tf_sfc/directional_inflator.cpp
+    src/tf_sfc/experiment_logger.cpp
+    src/tf_sfc/hard_corridor_parameterization.cpp
+    src/tf_sfc/tf_sfc_manager.cpp
     )
 target_link_libraries( traj_opt
     ${catkin_LIBRARIES} 
     )  
+
+if(decomp_ros_msgs_FOUND)
+  add_dependencies(traj_opt ${decomp_ros_msgs_EXPORTED_TARGETS})
+endif()

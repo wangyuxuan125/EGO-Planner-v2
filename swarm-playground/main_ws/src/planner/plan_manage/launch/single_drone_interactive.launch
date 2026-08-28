@@ -3,6 +3,64 @@
     <arg name="map_size_y" value="200.0"/>
     <arg name="map_size_z" value=" 3.0"/>
     <arg name="odom_topic" value="visual_slam/odom" />
+    <arg name="map_seed" default="1"/>
+    <arg name="tf_sfc_enabled" default="false"/>
+    <arg name="tf_sfc_corridor_method" default="obb"/>
+    <arg name="tf_sfc_max_faces" default="12"/>
+    <arg name="tf_sfc_max_obs_faces" default="6"/>
+    <arg name="tf_sfc_max_inflation_distance" default="1.0"/>
+    <arg name="tf_sfc_inflation_step" default="0.10"/>
+    <arg name="tf_sfc_use_projection" default="true"/>
+    <arg name="tf_sfc_use_soft_penalty" default="true"/>
+    <arg name="tf_sfc_allow_partial_corridors" default="true"/>
+    <arg name="tf_sfc_allow_ego_fallback" default="false"/>
+    <arg name="tf_sfc_enforce_final_corridor" default="true"/>
+    <arg name="tf_sfc_hard_corridor_parameterization" default="true"/>
+    <arg name="tf_sfc_hard_max_vertices" default="64"/>
+    <arg name="tf_sfc_hard_vertex_tolerance" default="0.0000001"/>
+    <arg name="tf_sfc_max_enforcement_passes" default="2"/>
+    <arg name="tf_sfc_enforcement_weight_multiplier" default="3.0"/>
+    <arg name="tf_sfc_enforcement_min_improvement" default="0.00001"/>
+    <arg name="tf_sfc_max_final_violation" default="0.001"/>
+    <arg name="tf_sfc_visualization_enabled" default="true"/>
+    <arg name="tf_sfc_visualization_frame" default="world"/>
+    <arg name="tf_sfc_min_valid_pieces" default="1"/>
+    <arg name="tf_sfc_safety_margin" default="0.10"/>
+    <arg name="tf_sfc_min_overlap_radius" default="0.02"/>
+    <arg name="tf_sfc_interior_sample_margin" default="0.0"/>
+    <arg name="tf_sfc_junction_refine_radius" default="0.50"/>
+    <arg name="tf_sfc_junction_refine_step" default="0.05"/>
+    <arg name="tf_sfc_direction_mode" default="1"/>
+    <arg name="tf_sfc_allow_direction_fallback" default="true"/>
+    <arg name="tf_sfc_log_enabled" default="true"/>
+    <arg name="tf_sfc_log_directory" default="$(env HOME)/tf_sfc_results/ego"/>
+    <arg name="tf_sfc_experiment_tag" default="default"/>
+    <arg name="tf_sfc_decomp_local_bbox_forward" default="0.5"/>
+    <arg name="tf_sfc_decomp_local_bbox_lateral" default="1.0"/>
+    <arg name="tf_sfc_decomp_local_bbox_vertical" default="1.0"/>
+    <arg name="tf_sfc_decomp_overlap_extension" default="0.20"/>
+    <arg name="tf_sfc_decomp_initial_velocity_segment" default="0.40"/>
+    <arg name="tf_sfc_decomp_initial_velocity_threshold" default="0.20"/>
+    <arg name="tf_sfc_decomp_degenerate_seed_length" default="0.10"/>
+    <arg name="tf_sfc_decomp_retry_seed_validation_without_velocity" default="true"/>
+    <arg name="tf_sfc_seed_retry_without_velocity_on_clearance_failure" default="true"/>
+    <arg name="tf_sfc_seed_clearance_astar_enabled" default="true"/>
+    <arg name="tf_sfc_seed_clearance_astar_time_limit" default="0.20"/>
+    <arg name="tf_sfc_trajectory_repair_enabled" default="true"/>
+    <arg name="tf_sfc_trajectory_repair_seed_fallback_enabled" default="true"/>
+    <arg name="tf_sfc_trajectory_repair_seed_geometric_acceptance_enabled" default="false"/>
+    <arg name="tf_sfc_trajectory_repair_max_passes" default="1"/>
+    <arg name="tf_sfc_post_optimization_repair_enabled" default="false"/>
+    <arg name="tf_sfc_post_optimization_repair_max_passes" default="1"/>
+    <arg name="tf_sfc_post_optimization_repair_max_seed_junction_shift" default="0.00001"/>
+    <arg name="tf_sfc_trajectory_repair_trigger" default="0.001"/>
+    <arg name="tf_sfc_trajectory_repair_min_improvement" default="0.0001"/>
+    <arg name="tf_sfc_face_quality_weight" default="0.20"/>
+    <arg name="tf_sfc_progress_guard_enabled" default="true"/>
+    <arg name="tf_sfc_progress_guard_horizon_s" default="1.0"/>
+    <arg name="tf_sfc_max_initial_progress_regression" default="0.05"/>
+    <arg name="tf_sfc_max_target_axis_progress_drop" default="0.25"/>
+    <arg name="tf_sfc_max_target_overshoot" default="0.15"/>
 
     <!-- map -->
     <node pkg ="map_generator" name ="random_forest" type ="random_forest" output = "screen">
@@ -10,7 +68,7 @@
         <param name="map/y_size" value="20" />
         <param name="map/z_size" value="3" />
         <param name="map/resolution" value="0.1"/>
-        <param name="ObstacleShape/seed" value="1"/>
+        <param name="ObstacleShape/seed" value="$(arg map_seed)"/>
         <param name="map/obs_num" value="100"/>
         <param name="ObstacleShape/lower_rad" value="0.5"/>
         <param name="ObstacleShape/upper_rad" value="0.7"/>
@@ -36,6 +94,62 @@
         <arg name="map_size_z" value="$(arg map_size_z)"/>
         <arg name="odom_topic" value="$(arg odom_topic)"/>
         <arg name="flight_type" value="1"/>
+        <arg name="tf_sfc_enabled" value="$(arg tf_sfc_enabled)"/>
+        <arg name="tf_sfc_corridor_method" value="$(arg tf_sfc_corridor_method)"/>
+        <arg name="tf_sfc_max_faces" value="$(arg tf_sfc_max_faces)"/>
+        <arg name="tf_sfc_max_obs_faces" value="$(arg tf_sfc_max_obs_faces)"/>
+        <arg name="tf_sfc_max_inflation_distance" value="$(arg tf_sfc_max_inflation_distance)"/>
+        <arg name="tf_sfc_inflation_step" value="$(arg tf_sfc_inflation_step)"/>
+        <arg name="tf_sfc_use_projection" value="$(arg tf_sfc_use_projection)"/>
+        <arg name="tf_sfc_use_soft_penalty" value="$(arg tf_sfc_use_soft_penalty)"/>
+        <arg name="tf_sfc_allow_partial_corridors" value="$(arg tf_sfc_allow_partial_corridors)"/>
+        <arg name="tf_sfc_allow_ego_fallback" value="$(arg tf_sfc_allow_ego_fallback)"/>
+        <arg name="tf_sfc_enforce_final_corridor" value="$(arg tf_sfc_enforce_final_corridor)"/>
+        <arg name="tf_sfc_hard_corridor_parameterization" value="$(arg tf_sfc_hard_corridor_parameterization)"/>
+        <arg name="tf_sfc_hard_max_vertices" value="$(arg tf_sfc_hard_max_vertices)"/>
+        <arg name="tf_sfc_hard_vertex_tolerance" value="$(arg tf_sfc_hard_vertex_tolerance)"/>
+        <arg name="tf_sfc_max_enforcement_passes" value="$(arg tf_sfc_max_enforcement_passes)"/>
+        <arg name="tf_sfc_enforcement_weight_multiplier" value="$(arg tf_sfc_enforcement_weight_multiplier)"/>
+        <arg name="tf_sfc_enforcement_min_improvement" value="$(arg tf_sfc_enforcement_min_improvement)"/>
+        <arg name="tf_sfc_max_final_violation" value="$(arg tf_sfc_max_final_violation)"/>
+        <arg name="tf_sfc_visualization_enabled" value="$(arg tf_sfc_visualization_enabled)"/>
+        <arg name="tf_sfc_visualization_frame" value="$(arg tf_sfc_visualization_frame)"/>
+        <arg name="tf_sfc_min_valid_pieces" value="$(arg tf_sfc_min_valid_pieces)"/>
+        <arg name="tf_sfc_safety_margin" value="$(arg tf_sfc_safety_margin)"/>
+        <arg name="tf_sfc_min_overlap_radius" value="$(arg tf_sfc_min_overlap_radius)"/>
+        <arg name="tf_sfc_interior_sample_margin" value="$(arg tf_sfc_interior_sample_margin)"/>
+        <arg name="tf_sfc_junction_refine_radius" value="$(arg tf_sfc_junction_refine_radius)"/>
+        <arg name="tf_sfc_junction_refine_step" value="$(arg tf_sfc_junction_refine_step)"/>
+        <arg name="tf_sfc_direction_mode" value="$(arg tf_sfc_direction_mode)"/>
+        <arg name="tf_sfc_allow_direction_fallback" value="$(arg tf_sfc_allow_direction_fallback)"/>
+        <arg name="tf_sfc_log_enabled" value="$(arg tf_sfc_log_enabled)"/>
+        <arg name="tf_sfc_log_directory" value="$(arg tf_sfc_log_directory)"/>
+        <arg name="tf_sfc_experiment_tag" value="$(arg tf_sfc_experiment_tag)"/>
+        <arg name="tf_sfc_decomp_local_bbox_forward" value="$(arg tf_sfc_decomp_local_bbox_forward)"/>
+        <arg name="tf_sfc_decomp_local_bbox_lateral" value="$(arg tf_sfc_decomp_local_bbox_lateral)"/>
+        <arg name="tf_sfc_decomp_local_bbox_vertical" value="$(arg tf_sfc_decomp_local_bbox_vertical)"/>
+        <arg name="tf_sfc_decomp_overlap_extension" value="$(arg tf_sfc_decomp_overlap_extension)"/>
+        <arg name="tf_sfc_decomp_initial_velocity_segment" value="$(arg tf_sfc_decomp_initial_velocity_segment)"/>
+        <arg name="tf_sfc_decomp_initial_velocity_threshold" value="$(arg tf_sfc_decomp_initial_velocity_threshold)"/>
+        <arg name="tf_sfc_decomp_degenerate_seed_length" value="$(arg tf_sfc_decomp_degenerate_seed_length)"/>
+        <arg name="tf_sfc_decomp_retry_seed_validation_without_velocity" value="$(arg tf_sfc_decomp_retry_seed_validation_without_velocity)"/>
+        <arg name="tf_sfc_seed_retry_without_velocity_on_clearance_failure" value="$(arg tf_sfc_seed_retry_without_velocity_on_clearance_failure)"/>
+        <arg name="tf_sfc_seed_clearance_astar_enabled" value="$(arg tf_sfc_seed_clearance_astar_enabled)"/>
+        <arg name="tf_sfc_seed_clearance_astar_time_limit" value="$(arg tf_sfc_seed_clearance_astar_time_limit)"/>
+        <arg name="tf_sfc_trajectory_repair_enabled" value="$(arg tf_sfc_trajectory_repair_enabled)"/>
+        <arg name="tf_sfc_trajectory_repair_seed_fallback_enabled" value="$(arg tf_sfc_trajectory_repair_seed_fallback_enabled)"/>
+        <arg name="tf_sfc_trajectory_repair_seed_geometric_acceptance_enabled" value="$(arg tf_sfc_trajectory_repair_seed_geometric_acceptance_enabled)"/>
+        <arg name="tf_sfc_trajectory_repair_max_passes" value="$(arg tf_sfc_trajectory_repair_max_passes)"/>
+        <arg name="tf_sfc_post_optimization_repair_enabled" value="$(arg tf_sfc_post_optimization_repair_enabled)"/>
+        <arg name="tf_sfc_post_optimization_repair_max_passes" value="$(arg tf_sfc_post_optimization_repair_max_passes)"/>
+        <arg name="tf_sfc_post_optimization_repair_max_seed_junction_shift" value="$(arg tf_sfc_post_optimization_repair_max_seed_junction_shift)"/>
+        <arg name="tf_sfc_trajectory_repair_trigger" value="$(arg tf_sfc_trajectory_repair_trigger)"/>
+        <arg name="tf_sfc_trajectory_repair_min_improvement" value="$(arg tf_sfc_trajectory_repair_min_improvement)"/>
+        <arg name="tf_sfc_face_quality_weight" value="$(arg tf_sfc_face_quality_weight)"/>
+        <arg name="tf_sfc_progress_guard_enabled" value="$(arg tf_sfc_progress_guard_enabled)"/>
+        <arg name="tf_sfc_progress_guard_horizon_s" value="$(arg tf_sfc_progress_guard_horizon_s)"/>
+        <arg name="tf_sfc_max_initial_progress_regression" value="$(arg tf_sfc_max_initial_progress_regression)"/>
+        <arg name="tf_sfc_max_target_axis_progress_drop" value="$(arg tf_sfc_max_target_axis_progress_drop)"/>
+        <arg name="tf_sfc_max_target_overshoot" value="$(arg tf_sfc_max_target_overshoot)"/>
     </include>
 </launch>
-

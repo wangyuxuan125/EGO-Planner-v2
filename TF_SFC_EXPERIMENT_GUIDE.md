@@ -1,0 +1,689 @@
+# TF-SFC 实验编译、运行与数据记录指南
+
+本文档对应 `feat/tf-sfc-mvp` 分支。当前包含保守六面 OBB MVP 和 Liu et al. (ICRA 2017) / DecompUtil 两种走廊生成器；功能默认关闭。启用后，单机实验启动文件默认采用严格模式，生成或认证失败会记为失败而不会伪装成 EGO 成功；工程运行仍可显式开启回退。
+
+## 1. 环境与编译
+
+推荐 Ubuntu 20.04、ROS Noetic 和 Release 编译。打开终端：
+
+```bash
+cd /你的路径/EGO-Planner-v2/swarm-playground/main_ws
+catkin_make -DCMAKE_BUILD_TYPE=Release
+source devel/setup.bash
+```
+
+每次新开终端都要重新执行：
+
+```bash
+cd /你的路径/EGO-Planner-v2/swarm-playground/main_ws
+source devel/setup.bash
+```
+
+### 1.1 可选：安装 DecompROS 走廊可视化
+
+DecompROS 提供 ROS 消息与 RViz 显示，其递归子模块 DecompUtil 提供 Liu 算法。为避免把 `catkin_make` 和 DecompROS 推荐的 `catkin build` 混在同一构建目录，建议建立独立工作空间：
+
+```bash
+sudo apt install python3-catkin-tools ros-noetic-catkin-simple
+
+mkdir -p $HOME/decomp_ws/src
+cd $HOME/decomp_ws/src
+git clone --recursive https://github.com/sikang/DecompROS.git
+cd DecompROS
+git submodule update --init --recursive
+
+cd $HOME/decomp_ws
+catkin config --cmake-args -DCMAKE_BUILD_TYPE=Release
+catkin build
+source devel/setup.bash
+
+cd /你的路径/EGO-Planner-v2/swarm-playground/main_ws
+catkin_make -DCMAKE_BUILD_TYPE=Release
+source devel/setup.bash
+```
+
+以后新开终端时必须先 source DecompROS，再 source EGO：
+
+```bash
+source $HOME/decomp_ws/devel/setup.bash
+source /你的路径/EGO-Planner-v2/swarm-playground/main_ws/devel/setup.bash
+```
+
+编译输出出现 `traj_opt: DecompROS corridor visualization enabled` 表示可视化已接入；出现 `traj_opt: Liu/DecompUtil corridor baseline enabled` 表示 Liu 基线可运行。两项是独立能力：只有消息依赖时可显示 OBB，但不能将其称为 Liu 方法。
+
+## 2. 单机仿真与对比命令
+
+所有命令均在 `swarm-playground/main_ws` 下运行。默认把 CSV 保存到 `$HOME/tf_sfc_results/ego`。
+
+### EGO 原始基线
+
+日志仍会保存，但 `tf_sfc_enabled:=false`，可用于计算成功率和规划耗时基线。
+
+```bash
+roslaunch ego_planner single_drone_interactive.launch \
+  map_seed:=42 \
+  tf_sfc_enabled:=false \
+  tf_sfc_experiment_tag:=ego_original
+```
+
+### EGO + PCA OBB-SFC
+
+```bash
+roslaunch ego_planner single_drone_interactive.launch \
+  map_seed:=42 \
+  tf_sfc_enabled:=true \
+  tf_sfc_corridor_method:=obb \
+  tf_sfc_direction_mode:=1 \
+  tf_sfc_allow_partial_corridors:=true \
+  tf_sfc_allow_ego_fallback:=false \
+  tf_sfc_hard_corridor_parameterization:=true \
+  tf_sfc_min_valid_pieces:=1 \
+  tf_sfc_safety_margin:=0.10 \
+  tf_sfc_min_overlap_radius:=0.02 \
+  tf_sfc_use_projection:=true \
+  tf_sfc_use_soft_penalty:=true \
+  tf_sfc_experiment_tag:=pca_obb_hard_junction_v9
+```
+
+### EGO + Frenet OBB-SFC 消融
+
+```bash
+roslaunch ego_planner single_drone_interactive.launch \
+  map_seed:=42 \
+  tf_sfc_enabled:=true \
+  tf_sfc_corridor_method:=obb \
+  tf_sfc_direction_mode:=0 \
+  tf_sfc_allow_partial_corridors:=true \
+  tf_sfc_allow_ego_fallback:=false \
+  tf_sfc_hard_corridor_parameterization:=true \
+  tf_sfc_use_projection:=true \
+  tf_sfc_use_soft_penalty:=true \
+  tf_sfc_experiment_tag:=frenet_obb_hard_junction_v9
+```
+
+方向模式为 `0=Frenet`、`1=PCA`、`2=Sensitivity Gramian`。当前分支尚未从完整 MINCO 局部目标自动构造各向异性的 per-piece Gramian；仅使用 jerk 二次型会在 xyz 上得到各向同性度量，不能冒充 trajectory-favorable sensitivity。PCA/Frenet 因此只能作为消融项。
+
+正式 sensitivity 实验必须同时设置 `tf_sfc_direction_mode:=2 tf_sfc_allow_direction_fallback:=false`。在真实 Gramian 接入前，该配置应以 `direction_failure` 明确失败；若为了工程调试允许回退，则 v18 CSV 的 `used_direction_mode`、`direction_fallback_allowed`、`direction_fallback_count` 和 corridor 级 requested/used mode 会暴露该回退，数据不得计入主方法。
+
+### EGO + Liu et al. EllipsoidDecomp SFC
+
+该基线要求 piecewise-linear seed 的连续边无碰撞。原 EGO A* 只保证 26 邻域节点为空闲，可能沿体素边角穿越占据空间；因此 Liu 调用显式开启连续边验证，原 EGO 和其他默认 A* 调用保持关闭。该搜索仍计入 `astar_search_ms` 和总规划时间，`seed_path_strategy` 会记录为 `edge_validated_astar`。不要把修正前的 `liu_hard_junction_v9`（典型失败为 `seed_path_occupied`）与修正后的标签合并统计。
+
+建议先把旧 CSV 移到归档目录，或至少使用下方的新标签，避免追加模式把两种实现混在同一实验组。
+
+
+
+```bash
+roslaunch ego_planner single_drone_interactive.launch \
+  map_seed:=42 \
+  tf_sfc_enabled:=true \
+  tf_sfc_corridor_method:=ellipsoid_decomp \
+  tf_sfc_allow_partial_corridors:=true \
+  tf_sfc_allow_ego_fallback:=false \
+  tf_sfc_enforce_final_corridor:=true \
+  tf_sfc_hard_corridor_parameterization:=true \
+  tf_sfc_hard_max_vertices:=64 \
+  tf_sfc_max_enforcement_passes:=2 \
+  tf_sfc_enforcement_weight_multiplier:=3.0 \
+  tf_sfc_enforcement_min_improvement:=0.00001 \
+  tf_sfc_max_final_violation:=0.001 \
+  tf_sfc_use_projection:=true \
+  tf_sfc_use_soft_penalty:=true \
+  tf_sfc_decomp_local_bbox_forward:=0.5 \
+  tf_sfc_decomp_local_bbox_lateral:=1.0 \
+  tf_sfc_decomp_local_bbox_vertical:=1.0 \
+  tf_sfc_decomp_overlap_extension:=0.20 \
+  tf_sfc_decomp_initial_velocity_segment:=0.40 \
+  tf_sfc_decomp_initial_velocity_threshold:=0.20 \
+  tf_sfc_decomp_degenerate_seed_length:=0.10 \
+  tf_sfc_decomp_retry_seed_validation_without_velocity:=true \
+  tf_sfc_experiment_tag:=liu_edge_validated_hard_junction_v9
+```
+
+该分支先调用 EGO 已有 A* 生成无碰撞骨架，做视线简化后按 MINCO piece 预算细分，再逐段调用 `EllipsoidDecomp3D::dilate`。TF-SFC 的这次 A* 调用严格限制在当前膨胀局部地图内，不能把地图外未知空间当作自由空间；这一限制不改变原始 EGO 的其他 A* 调用。为提高相邻多面体在折点处的公共内域，每个分解 seed 段会沿自身切向向共享折点外延伸，延伸部分逐点检查局部地图；遇到障碍或边界时自动折半回退。延伸量由 `tf_sfc_decomp_overlap_extension` 控制并限制为当前段长度的 45% 以下。`0` 可关闭该优化，用于消融实验；它不会降低 `tf_sfc_min_overlap_radius` 的认证阈值。
+
+EGO 使用滚动局部地图；当规划视野大于当前地图范围时，只为从当前状态开始、位于已知地图内的连续前缀生成走廊。若 A* 前缀的转折数超过可用 prefix piece 数，则保留能够放入预算的最远可视折点，而不是丢弃整个走廊序列。第一个未覆盖 piece 记录为 `outside_local_map`，其后记录为 `skipped_after_failure`。因此 `tf_sfc_allow_partial_corridors:=true` 是该局部规划器的正常严格配置；`allow_ego_fallback` 仍保持 `false`，不会把原始 EGO 结果计作走廊方法成功。A*、简化和分解耗时都计入 `corridor_generation_ms` 与 `total_planning_ms`。若 DecompUtil 未被发现，会以 `decomp_util_unavailable` 失败，不会静默退化为 OBB 或 EGO。
+
+`single_drone_interactive.launch` 对 EGO 回退默认采用严格模式（`tf_sfc_allow_ego_fallback=false`）；只有明确进行工程可用性测试时才建议手动开启回退。
+
+v9 延续 v7 的 `tf_sfc_hard_corridor_parameterization`。对于每个 MINCO 内部连接点，若左右 piece 都有有效走廊，代码枚举两个半空间集合交集的顶点；若只有一侧有效，则枚举该侧走廊顶点。优化变量经归一化平方权重映射为这些顶点的凸组合，因此连接点在每次 L-BFGS 迭代中都严格位于对应交集/走廊内。这与 GCOPTER 的 `forwardP/backwardGradP` 参数化作用相同。完全没有走廊覆盖的尾部连接点仍使用 3 维自由坐标。`tf_sfc_hard_max_vertices` 只在异常复杂多面体上限制变量数；被保留顶点的凸包仍是原交集的安全子集。
+
+这里的“硬约束”特指 **MINCO 连接点硬约束**，不能写成“整条连续多项式已被严格限制在走廊内”。piece 内曲线仍通过 `tf_sfc_use_soft_penalty` 的采样半空间代价参与优化，并由最终密集采样门限拒绝未解决越界。Liu et al. 论文的式 (3) 将 `A_i^T Phi_i(t) < b_i` 写成 QP 约束，但正文明确说明实际采用 sample-based confinement；Elastic-Tracker 同样组合了走廊/交集内的结点参数化与曲线采样软惩罚。因此论文中建议使用“hard corridor-junction parameterization + sampled trajectory penalty/certification”这一准确表述。
+
+严格走廊终检默认开启。优化后的轨迹若在任一有效走廊 piece 上出现超过 `tf_sfc_max_final_violation` 的采样半空间越界，优化器会将走廊权重乘以 `tf_sfc_enforcement_weight_multiplier`，从当前解继续优化，最多执行 `tf_sfc_max_enforcement_passes` 次。v6 将倍率从 10 降为 3，并只接受有限、通过 EGO 精细碰撞检查、且走廊最大越界至少改善 `tf_sfc_enforcement_min_improvement` 的候选；发散、碰撞、群体净空失败、求解器异常或不再改善时恢复本轮最佳安全候选并将本次规划记为失败。这样回滚用于保存诊断和避免污染下一次重规划，不会把仍超过 1 mm 阈值的轨迹伪装成成功。无走廊的 `outside_local_map`、`piece_budget_tail` 等尾段不参与该终检。
+
+EllipsoidDecomp 的 seed 有两项稳定性处理：有足够初速度时，首段先沿速度方向构造并验碰，再从该点执行 A*；起终点落在同一体素甚至完全重合时，使用按“速度方向、±x、±y、±z”依次尝试的短探针，只有局部地图确认无碰撞后才用于分解。短探针会按现有 MINCO piece 数细分，因此在 `allow_partial_corridors=false` 下也不会因零长度 A* 路径直接退化为 `insufficient_pieces`。
+
+v9 将 seed 线段检查改为三维体素 DDA 射线遍历，覆盖对角线穿过的每个栅格，避免均匀采样漏掉薄障碍体素。如果速度对齐 A* 已返回路径、但最终细分 seed 在 DecompUtil 前复检为 `seed_path_occupied`，默认以当前状态重建一次普通 A* seed；该行为由 `tf_sfc_decomp_retry_seed_validation_without_velocity` 控制。正式配置保持 `true`；设置为 `false` 可复现无二次重建的消融。日志会记录尝试、回退原因和原失败点，二次重建仍失败时不会回退 EGO。
+
+### v12：TF-SFC 段内裕量与接头重叠分离
+
+v11 的 `edge_validated_astar` 已成功生成连续边无碰撞的 A* seed，但 proposed TF-SFC 在第 0 段以 `obstacle_separation_failure` 失败。原因是 `min_overlap_radius` 被错误用于每一个段内采样点，相当于额外要求整段轨迹带有固定半径的自由管道。v12 只在每段首尾端点使用该重叠半径，并增加独立参数 `tf_sfc_interior_sample_margin`；首轮验证使用 `0.0`。
+
+```bash
+roslaunch ego_planner single_drone_interactive.launch \
+  map_seed:=42 \
+  tf_sfc_enabled:=true \
+  tf_sfc_corridor_method:=tf_sfc \
+  tf_sfc_direction_mode:=1 \
+  tf_sfc_max_faces:=12 \
+  tf_sfc_max_obs_faces:=6 \
+  tf_sfc_safety_margin:=0.10 \
+  tf_sfc_min_overlap_radius:=0.02 \
+  tf_sfc_interior_sample_margin:=0.0 \
+  tf_sfc_allow_partial_corridors:=true \
+  tf_sfc_min_valid_pieces:=2 \
+  tf_sfc_allow_ego_fallback:=false \
+  tf_sfc_hard_corridor_parameterization:=true \
+  tf_sfc_use_soft_penalty:=true \
+  tf_sfc_experiment_tag:=proposed_pca_f12_v12
+```
+
+若仍失败，不要先调整 A*。查看 `ego_corridors_v12_drone_0.csv` 的 `min_obstacle_sample_distance_m`、`separation_failure_sample_id` 和 `separation_failure_at_endpoint`：端点失败指向重叠构造，内部失败指向 seed/包络净空，`face_budget_saturated=1` 则指向平面选择或裁剪。
+
+### v12.1：接头净空感知的 seed 分段
+
+v12 CSV 若同时满足 `separation_failure_at_endpoint=1`、`separation_failure_sample_id=8` 且 `face_budget_saturated=0`，说明失败点是第一个 MINCO 内部接头，而不是段内样本或面预算。当前修正保持 raw A* 不变，在视线简化过程中把净空不足的最远可见折点回退到原始 A* 路径上能够容纳 `min_overlap_radius` 的点。使用该修正时，`seed_path_strategy` 会带有 `_overlap_clearance_refined` 后缀。
+
+重新测试时使用新的目录或标签 `proposed_pca_f12_v12_overlap_refined`，不要把修正前后的追加行放在同一实验组。若结果变为 `overlap_too_small`，表示该 raw A* 局部路径上确实没有满足当前固定半径的可达接头；此时应进入 overlap refiner/clearance-aware path ablation，而不是把失败计为面受限生成器或优化器失败。
+
+### v12.2：局部 overlap refiner
+
+v12.1 的 `overlap_too_small` 若伴随 `seed_path_point_count=0`，表示 raw A* 栅格点门槛在走廊生成前拒绝了 seed。v12.2 改为先构造最终保留的 fixed-piece seed，再只移动内部接头；每个候选必须同时满足膨胀体素 AABB 净空和左右两条 seed 边的连续无碰撞。
+
+新增参数：
+
+- `tf_sfc_junction_refine_radius:=0.50`：接头局部搜索半径；
+- `tf_sfc_junction_refine_step:=0.05`：候选搜索步长。
+
+正式比较时两项必须在 Liu、OBB 和 TF-SFC 间保持相同。成功移动时 `seed_path_strategy` 带 `_overlap_local_refined`；搜索空间内无可行接头时带 `_overlap_local_refine_failed`。
+
+### v12.3：使用安全折线生成走廊包络
+
+若 seed 已显示 `_overlap_local_refined`、`seed_path_edge_valid=1`，但第 0 段成功而第 1 段出现内部采样点 `obstacle_separation_failure`，说明高阶初始 MINCO 曲线在折点之间过冲。v12.3 中 OBB 与 TF-SFC 改为围绕已连续验碰的直线 seed segment 生成走廊；初始 MINCO piece 只提供方向提示。优化后的曲线仍需要通过硬接头参数化、段内代价、碰撞复检和最终走廊门限。
+
+本轮使用独立标签 `proposed_pca_f12_v12_3_line_seed`。若至少两个连续走廊有效，在线 certified-prefix 配置会进入优化器；未覆盖尾段仍按 `outside_local_map` 或 `piece_budget_tail` 记录。
+
+### v12.4：连续线段分离与 overlap 硬阈值
+
+v12.3 已证明安全折线有效且第 0 段稳定生成，但第 1 段仍被切面拒绝。v12.4 将障碍切面法向从“障碍到最近离散采样点”改为“障碍到连续 seed 线段最近点”，并在连续最近点法向及各采样点候选法向中选择认证分离间隙最大的平面。
+
+同时修正 overlap 参数语义：对一个凸走廊，如果两端都包含半径 `r` 的球，则走廊必然包含两球的凸包，即沿整段的半径 `r` 胶囊。此前 `0.08 m` 因而不是单纯接头条件，而是额外的整段厚管道条件。主实验的硬 full-dimensional overlap 接受下限改为 `0.02 m`（当前 0.1 m 栅格的 0.2 cell）；实际 overlap radius 继续作为质量指标报告。
+
+`0.08 m` 可作为严格 overlap/clearance 消融，但不能把其不可行样本直接解释为 TF-SFC 几何算法失败。主实验命令使用 `tf_sfc_min_overlap_radius:=0.02`。
+
+### 自定义日志目录
+
+```bash
+roslaunch ego_planner single_drone_interactive.launch \
+  tf_sfc_enabled:=true \
+  tf_sfc_direction_mode:=1 \
+  tf_sfc_use_soft_penalty:=true \
+  tf_sfc_log_directory:=$HOME/experiments/icra/scene_01 \
+  tf_sfc_experiment_tag:=pca_scene_01
+```
+
+启动后，在 RViz 中使用 `3D Goal Set` 设置目标。仿真启动文件通过
+`advanced_param.xml` 将规划器源码中的 `/goal` 重映射为
+`/goal_with_id`，因此命令行测试必须发布到后者：
+
+```bash
+rostopic info /goal_with_id
+rostopic pub -1 /goal_with_id quadrotor_msgs/GoalSet \
+  "drone_id: 0
+goal: [15.04, -0.05, 1.0]"
+```
+
+只有当 `rostopic info /goal_with_id` 列出
+`/drone_0_ego_planner_node`，且规划终端打印完整的
+`Received goal: x, y, z` 后，该目标才算实际下发。为了公平比较，方法之间应
+保持地图 seed、三维起终点、速度/加速度限制和重复次数一致。
+
+### RViz 走廊显示
+
+`local_map_off.rviz` 已加入 `TF-SFC Corridors` 显示项，默认订阅：
+
+```text
+/drone_0_ego_planner_node/tf_sfc/polyhedron_array
+```
+
+也可以先确认消息是否存在：
+
+```bash
+rostopic echo -n 1 /drone_0_ego_planner_node/tf_sfc/polyhedron_array
+```
+
+发布器只发送 `valid=1` 的走廊。若消息中的 `polyhedrons` 为空，应先查看 CSV 的 `corridor_count` 和 `first_failure_reason`；这表示本次没有有效走廊，并非一定是 RViz 设置错误。
+
+## 3. 输出文件
+
+默认输出：
+
+```text
+$HOME/tf_sfc_results/ego/ego_runs_v18_drone_0.csv
+$HOME/tf_sfc_results/ego/ego_corridors_v18_drone_0.csv
+```
+
+- `ego_runs_v18_drone_<id>.csv`：每次优化候选调用一行。`planning_event_id` 标识一次重规划事件，`retry_index` 表示同一目标下连续失败后的重试序号，`attempt_id` 只表示多拓扑候选，三者不能混用。全局输入由 `commanded_goal_{x,y,z}_m` 记录，每次滚动规划实际使用的局部目标由 `planning_target_{x,y,z}_m` 记录；目标对比必须以前者分组。
+- 搜索阶段单独记录 `astar_search_attempted/success/call_count/ms`、原始 A* 路径点数/长度、最终 seed 点数/长度、连续边有效性和局部地图覆盖率。v18 另以 `seed_frontend_evaluated`、`seed_frontend_success` 和 `corridor_generation_attempted` 区分前端失败与真正的 corridor 构造失败。`seed_path_build_ms` 包含搜索、视线简化和 piece 对齐；`corridor_inflation_ms` 单独记录区域生成调用；两者仍包含在 `corridor_generation_ms` 和 `total_planning_ms` 内。
+- v18 将启动期的局部地图问题进一步拆开：`allow_partial_corridors` 记录实际生效参数，`seed_start_in_map`/`seed_finish_in_map` 记录端点状态，`partial_target_search_attempted/found`、`partial_boundary_ratio` 和六个 `inflated_map_{low,high}_*` 字段记录滚动地图可用范围。若策略为 `partial_corridors_disabled`，修正启动参数；若为 `inflated_map_forward_extent_not_ready`，该样本属于传感器/地图预热失败，不得记作 PCA 或 corridor 几何失败。
+- `ego_corridors_v18_drone_<id>.csv`：每个轨迹分段一行，并记录 `inflation_candidate_evaluation_count`、`requested_direction_mode` 与 `used_direction_mode`。Run 表中的 `direct_spatial_variable_count`、`hard_spatial_variable_count`、`hard_spatial_variable_overhead_ratio` 和 `face_sample_pairs_per_evaluation` 用于核验“降低约束负担”的声明；若 ratio 大于 1，不得声称参数维数下降。EllipsoidDecomp 额外记录种子包含是否被评估、是否完整包含线段以及最大归一化半空间违反量。由于多面体是凸集，只要两个端点位于多面体内，整条线 seed 就位于多面体内。
+- 最终安全失败继续拆分为 `obstacle_collision_failure`、`swarm_clearance_failure` 和走廊违反；硬连接点与采样曲线违反量保持独立。
+
+文件使用追加模式。不要在同一标签下混入不同地图或参数；每个场景应使用独立目录或唯一 `tf_sfc_experiment_tag`。
+
+快速查看：
+
+```bash
+head -n 5 $HOME/tf_sfc_results/ego/ego_runs_v18_drone_0.csv
+head -n 5 $HOME/tf_sfc_results/ego/ego_corridors_v18_drone_0.csv
+```
+
+## 4. 当前可用于论文统计的字段
+
+论文统计应分层：
+
+1. 搜索前端：`astar_search_success`、`astar_search_ms`、`seed_path_edge_valid` 和路径长度。
+2. 走廊前端：种子包含率、走廊生成率、`corridor_inflation_ms`、面数、重叠半径和安全余量。
+3. 轨迹后端：只在 `tf_sfc_generated=1` 条件下统计优化成功率、优化时间、轨迹时长/长度及约束违反。
+4. 完整系统：仍需要 FSM/仿真器的目标到达、超时和执行期碰撞记录；不能把单次 `success` 或“某个目标至少生成过一次轨迹”写成 mission success。
+
+`mean_weighted_width` 与 `min_overlap_radius` 是解释性几何指标。当前 MVP 尚未严谨提供 corridor volume、MVIE/Chebyshev radius、连续轨迹最小净空、真实 sensitivity Gramian、`alpha_max`、逐迭代 objective decrease 和严格 constraint count，不应以宽度代理冒充体积。
+
+## 5. 分层统计与 Wilson 置信区间
+
+使用仓库内的聚合工具；它明确把候选调用、重规划事件、目标和有效走廊条件下的后端成功率分开：
+
+```bash
+python3 tools/analyze_tf_sfc_v9.py \
+  $HOME/tf_sfc_results/ego/ego_runs_v18_drone_0.csv
+```
+
+输出中的 `optimizer-call success` 仅为诊断项；论文主表应优先使用独立场景/目标上的系统结果、固定 seed 输入的走廊结果，以及有效走廊条件下的后端结果。工具给出的 “goals with >=1 successful plan” 也不是目标到达率。
+
+## 6. 实验注意事项
+
+1. 正式计时使用 Release 编译，关闭不必要的录屏和调试输出。
+2. 启动后等待 `Global Pointcloud received` 和 `Traj server: ready`，再额外等待约 2 秒让局部深度/膨胀 ring buffer 更新；随后做若干次预热运行，再开始记录正式试验。
+3. 每种方法、每个场景使用相同 seed 和起终点，建议至少重复 30 次。
+4. 保留原始 CSV，只在副本上清洗或聚合数据。
+5. 正式 TF-SFC 实验使用 `tf_sfc_allow_ego_fallback:=false`；`fallback_to_ego=1` 的工程运行样本不能算作 TF-SFC 成功样本。
+6. `allow_partial_corridors=true` 表示只约束从当前状态开始、位于已知局部地图内的连续有效前缀；末端未知空间不会导致前面已认证走廊全部丢失。正式命令必须显式写出 `tf_sfc_allow_partial_corridors:=true`，不要仅依赖 launch 默认值。
+7. 对当前默认参数，局部地图横向半径为 `5.5 m`，规划视野为 `7.5 m`。设置 `allow_partial_corridors=false` 要求整个 7.5 m 轨迹都在 5.5 m 地图内，通常会得到 `outside_local_map`，不应作为默认实验配置。
+8. 当剩余轨迹只有 2 个 piece 且目标仍在局部地图外时，局部前缀最多使用 1 个走廊 piece。若目标已在同一体素内，v6 使用碰撞检查短探针并按完整 piece 数细分，避免接近目标时的 `insufficient_pieces` 重试风暴。
+9. 正式对比时固定 `tf_sfc_decomp_overlap_extension`。建议主实验使用 `0.20 m`，并额外报告 `0 m` 消融，以判断成功率提升来自重叠构造还是其他参数变化。
+10. 当目标位于局部地图内但 A* 折点数超过短轨迹的 piece 预算时，实现会保留认证前缀，并把最后一段标记为 `piece_budget_tail`。该尾段只受原始 EGO 障碍代价和最终碰撞检查约束，必须在论文中与全走廊覆盖样本分开统计。
+
+论文最终实验前还需要完成的项目见 [ICRA_EXPERIMENT_READINESS.md](ICRA_EXPERIMENT_READINESS.md)。
+
+## 7. 将 Liu et al. ICRA 2017 作为对比方法
+
+可行，但必须区分两个组件：
+
+- `DecompROS` 是消息、转换工具和 RViz 插件；把现有 OBB 发布成 `PolyhedronArray` 只属于可视化，不能记作 Liu et al. 方法。
+- 论文对比基线必须实际调用 DecompUtil 的 `EllipsoidDecomp3D::dilate(path)`，使用它生成的多面体约束驱动同一套轨迹优化器，并单独记录走廊生成耗时与成功率。
+
+建议将方法命名为 `EGO + EllipsoidDecomp SFC (Liu et al., ICRA 2017)`，并与 `EGO original`、`EGO + PCA OBB-SFC` 分开。所有方法必须使用相同地图 seed、起终点、局部地图范围、障碍膨胀、动力学限制和失败计数规则。若 EllipsoidDecomp 使用预先无碰撞路径，而 OBB 使用未优化初始轨迹，需要把路径搜索/预处理耗时纳入总规划时间，或为所有方法提供相同的无碰撞参考路径，否则比较不公平。
+
+本分支现在已通过 `tf_sfc_corridor_method:=ellipsoid_decomp` 实际调用 DecompUtil，并用 A* 无碰撞骨架驱动同一套 EGO 优化器。论文中应将它标记为独立基线，不与 DecompROS 可视化或 OBB-SFC 混称。
+
+
+## 8. v12.5：体素支撑平面回归
+
+v12.4 固定种子日志不是 A* 失败：110/110 次调用均通过 A* 和边占据验证，但第 1 个 corridor 在端点处集中出现 `obstacle_separation_failure`。最近障碍体素中心距离约为 `0.07575 m`。旧实现先使用“种子到体素中心”的方向，再减去体素 AABB 支撑半径；该方向不一定是点/线段与体素盒的分离轴，因此可能把仍有净空的种子错误判为不可分。
+
+v12.5 对每个占据体素按完整 AABB 处理，并使用种子到体素 AABB 最近点的方向构造 restrictive support plane。A* 图、搜索代价和原始路径保持不变；这一步是后续 FIRI/RsI seed-containment 前端的几何基础。
+
+重新编译后运行：
+
+```bash
+roslaunch ego_planner single_drone_interactive.launch \
+  map_seed:=42 \
+  tf_sfc_enabled:=true \
+  tf_sfc_corridor_method:=tf_sfc \
+  tf_sfc_direction_mode:=1 \
+  tf_sfc_max_faces:=12 \
+  tf_sfc_max_obstacle_faces:=6 \
+  tf_sfc_safety_margin:=0.10 \
+  tf_sfc_min_overlap_radius:=0.02 \
+  tf_sfc_allow_partial_corridors:=true \
+  tf_sfc_min_valid_pieces:=2 \
+  tf_sfc_allow_ego_fallback:=false \
+  tf_sfc_hard_corridor_parameterization:=true \
+  tf_sfc_use_soft_penalty:=true \
+  tf_sfc_experiment_tag:=proposed_pca_f12_v12_5_voxel_support
+```
+
+本阶段通过条件是至少一次规划同时满足：
+
+- `corridor_count >= 2`；
+- `tf_sfc_generated = 1`；
+- `optimizer_ms > 0`；
+- `hard_parameterization_active = 1`。
+
+在通过该门槛前，不叠加完整 MVIE、MINCO-Hessian 或新的面选择器，以保持失败归因清晰。
+
+
+## 9. v12.6：组合支撑方向与精确 segment–voxel 距离
+
+v12.5 固定场景产生 1120 次同一事件的重试，全部在第 0 个 corridor 的端点 sample 0 失败。与 v12.4 相比，单独用“种子到 AABB 最近点”方向替换体素中心方向造成了回归：该方向对单点最优，但不一定把完整种子线段放在同一安全半空间。
+
+v12.6 使用以下有限候选集，并仍按最大认证间隙选面：
+
+1. 连续种子到体素中心的方向；
+2. 各离散种子点到体素中心的方向；
+3. 每个种子子线段与占据体素 AABB 的精确最近点对方向。
+
+线段—AABB 最近对通过分段凸二次函数的解析最小化计算，不进行高密度采样。现有 `min_obstacle_sample_distance_m` 从本版本开始记录种子线段到占据体素 AABB 的真实距离，而不是到体素中心的距离。
+
+回归标签：
+
+```bash
+tf_sfc_experiment_tag:=proposed_pca_f12_v12_6_segment_voxel_support
+```
+
+仍以四项 G0 条件作为通过标准。确定性失败时只保留 5–10 次重试。
+
+
+## 10. v18：共享 seed-clearance 重建
+
+v16 数据显示，部分滚动重规划并非走廊膨胀失败，而是带初速度前缀的 seed 在 junction clearance / corner repair 认证阶段失败。v18 只对这一种情况执行一次普通 A* 重建：
+
+- 仅当首次失败为 `seed_clearance_failure` 且首次 seed 实际采用了速度对齐前缀时触发；
+- 重建保持相同地图、起点、目标、piece 预算、边验证和 A* 代价，仅将初速度前缀长度置零；
+- PCA/Frenet/正式 TF-SFC 与 Liu/EllipsoidDecomp 共用同一逻辑，不为某个 corridor 方法更换搜索器；
+- 普通 A* 自身失败时不会递归重试；两次搜索与 seed 构造耗时均累计进 `astar_search_ms`、`seed_path_build_ms` 和 `total_planning_ms`。
+
+主实验保持该开关开启，并使用新标签：
+
+```bash
+roslaunch ego_planner single_drone_interactive.launch \
+  map_seed:=42 \
+  tf_sfc_enabled:=true \
+  tf_sfc_corridor_method:=tf_sfc \
+  tf_sfc_direction_mode:=1 \
+  tf_sfc_allow_partial_corridors:=true \
+  tf_sfc_allow_ego_fallback:=false \
+  tf_sfc_hard_corridor_parameterization:=true \
+  tf_sfc_seed_retry_without_velocity_on_clearance_failure:=true \
+  tf_sfc_experiment_tag:=pca_tf_sfc_v18
+```
+
+公平性消融仅改变一个开关：
+
+```bash
+tf_sfc_seed_retry_without_velocity_on_clearance_failure:=false \
+tf_sfc_experiment_tag:=pca_tf_sfc_v18_no_clearance_retry
+```
+
+v18 run 表新增 `clearance_retry_attempted`、`clearance_retry_success`、`clearance_retry_initial_strategy` 和 `clearance_retry_first_failure_point_id`。统计时应同时报告触发率、条件成功率和附加搜索耗时，不能把重试隐藏为 corridor 生成改进。该修正只提高共享 seed 前端的鲁棒性；它不构成 MINCO sensitivity 方向或固定三维走廊参数化的实现。
+
+
+## 11. v18：共享 clearance-aware A* 回退
+
+困难目标 `(15.04, -0.05, 1.0)` 的固定 seed-42 对照中，原始 EGO 到达目标，而 TF-SFC 与 Liu/EllipsoidDecomp 均在普通占据 A* 返回后、同一个 raw seed 边的净空认证处失败。将局部修复半径从 0.5 m 增至 1.5 m 仍未改变失败点，并把 seed 构造中位时间推高到约 172 ms。因此 v18 不再依赖扩大局部 BFS，而是在首次 `seed_clearance_failure` 后执行一次共享的 clearance-aware 全局 A*：
+
+- 原始 EGO 的所有 A* 调用保持默认行为；
+- TF-SFC 与 Liu 共用同一边认证器、`min_overlap_radius`、地图、目标和 piece 预算；
+- 普通 A* 成功时不触发额外搜索；
+- clearance A* 的每条候选边必须通过连续占据检查和 radius-capsule 净空认证；
+- 搜索受独立超时限制，耗时完整计入 seed、corridor 和 total planning 时间；
+- 关闭 `seed_clearance_astar_enabled` 可恢复 v17 普通 A* 前端消融。
+
+困难目标的 TF-SFC 主测试：
+
+```bash
+roslaunch ego_planner single_drone_interactive.launch \
+  map_seed:=42 \
+  tf_sfc_enabled:=true \
+  tf_sfc_corridor_method:=tf_sfc \
+  tf_sfc_direction_mode:=1 \
+  tf_sfc_allow_partial_corridors:=true \
+  tf_sfc_allow_ego_fallback:=false \
+  tf_sfc_hard_corridor_parameterization:=true \
+  tf_sfc_min_overlap_radius:=0.02 \
+  tf_sfc_junction_refine_radius:=0.50 \
+  tf_sfc_seed_retry_without_velocity_on_clearance_failure:=true \
+  tf_sfc_seed_clearance_astar_enabled:=true \
+  tf_sfc_seed_clearance_astar_time_limit:=0.20 \
+  tf_sfc_experiment_tag:=pca_tf_sfc_v18_clearance_astar
+```
+
+Liu 使用完全相同的前端设置，只改变 corridor 方法和标签：
+
+```bash
+tf_sfc_corridor_method:=ellipsoid_decomp \
+tf_sfc_experiment_tag:=liu_v18_clearance_astar
+```
+
+v18 run 表新增 `clearance_astar_attempted`、`clearance_astar_success`、`clearance_astar_call_count` 和 `clearance_astar_ms`，并修复成功记录未复制 v17 clearance-retry provenance 的问题。正式统计应把 occupancy-A* 与 clearance-A* 作为前端消融，同时只在共享 seed 成功的条件下比较 Liu 与 TF-SFC 的 corridor geometry。
+
+
+## EGO schema-v19: optimizer/certifier sampling consistency
+
+Schema v19 fixes a scientific-validity issue exposed by the v18 hard-goal
+regression. The strict final corridor gate used `tf_sfc/samples_per_piece`
+(default 8), while the L-BFGS corridor penalty was evaluated only on EGO's
+`optimization/constraint_points_perPiece` grid (default 5). A polynomial
+could therefore violate a face at a sample visible to the final gate but
+invisible to the optimizer.
+
+The corridor penalty now has its own quadrature loop with exactly
+`tf_sfc/samples_per_piece + 1` samples per constrained piece. Original EGO
+obstacle, swarm and feasibility costs retain their original grid, so
+`tf_sfc_enabled:=false` is unchanged. TF-SFC and EllipsoidDecomp use the
+same corridor grid for a fair comparison.
+
+New run columns identify the actual grid and the worst sampled violation:
+
+- `corridor_penalty_samples_per_piece`;
+- initial/final violating face-sample counts;
+- initial/final worst piece, face, sample, and normalized time ratio.
+
+The first v19 regression should repeat the same map seed 42 and goal
+`[15.04, -0.05, 1.0]` for both `tf_sfc` and `ellipsoid_decomp`. Compare
+optimizer-call success, longest failure streak, final violating face-sample
+count, and planning-time percentiles against v18. Do not treat replanning
+calls as independent trials.
+
+## EGO schema-v20: bounded trajectory-feasibility repair
+
+The v19 fixed-seed regression localized most strict TF-SFC failures to one
+piece and one interior sample (commonly piece 1 at normalized time 0.75).
+Schema v20 therefore adds one proposed-method-only pre-optimization repair:
+
+1. evaluate the initial MINCO trajectory on the same v19 sample grid;
+2. select only the worst violating piece;
+3. rebuild that corridor around the piece's actual MINCO curve samples;
+4. accept the candidate only when obstacle separation, the existing face
+   budget, both adjacent overlap tests, piece-wise improvement, and global
+   non-worsening all pass;
+5. configure the hard corridor parameterization from the accepted frozen set.
+
+The default pass budget is one. The repair does not change A*, Liu/
+EllipsoidDecomp, original EGO, the 12-face budget, or the final 1 mm gate.
+Disable `tf_sfc_trajectory_repair_enabled` for the v19-equivalent ablation.
+
+First v20 TF-SFC regression:
+
+```bash
+roslaunch ego_planner single_drone_interactive.launch \
+  map_seed:=42 \
+  tf_sfc_enabled:=true \
+  tf_sfc_corridor_method:=tf_sfc \
+  tf_sfc_direction_mode:=1 \
+  tf_sfc_allow_partial_corridors:=true \
+  tf_sfc_allow_ego_fallback:=false \
+  tf_sfc_hard_corridor_parameterization:=true \
+  tf_sfc_trajectory_repair_enabled:=true \
+  tf_sfc_trajectory_repair_max_passes:=1 \
+  tf_sfc_trajectory_repair_trigger:=0.001 \
+  tf_sfc_trajectory_repair_min_improvement:=0.0001 \
+  tf_sfc_experiment_tag:=pca_tf_sfc_v20_trajectory_repair
+```
+
+Schema-v20 run logs add repair enable/attempt/accept counts, repaired piece,
+candidate face count, repair time, global and piece violations before/after,
+both neighbor overlap radii, and the rejection/acceptance reason. The primary
+gate is a reduction of strict corridor rejections and the initial 13--15 call
+failure streak without increasing faces or P90 planning time materially.
+
+## EGO schema-v21: certified-seed and bounded outer repair
+
+The v20 difficult-goal run completed the mission and respected the 12-face and
+0.02 m overlap gates, but 32/34 attempted repairs failed before producing a
+face because the initial MINCO samples could not seed an obstacle-free convex
+region. Six other calls were initially within the corridor but drifted outside
+it during optimization. Schema v21 addresses those two failure classes without
+changing the shared A* front end:
+
+1. try trajectory-sample repair as in v20;
+2. on a retryable inflation failure, rebuild from the already certified seed
+   segment while retaining directions computed from the actual MINCO piece;
+3. retain the face, obstacle, adjacent-overlap, piece-improvement and global
+   non-worsening gates;
+4. if ordinary strict continuation would reject a collision-free optimized
+   trajectory, allow at most one outer repair;
+5. require a fresh hard parameterization that re-encodes every current
+   junction with at most 1e-5 m displacement, then freeze it and run L-BFGS
+   once more with no additional continuation.
+
+First v21 regression:
+
+```bash
+roslaunch ego_planner single_drone_interactive.launch \
+  map_seed:=42 \
+  tf_sfc_enabled:=true \
+  tf_sfc_corridor_method:=tf_sfc \
+  tf_sfc_direction_mode:=1 \
+  tf_sfc_allow_partial_corridors:=true \
+  tf_sfc_allow_ego_fallback:=false \
+  tf_sfc_hard_corridor_parameterization:=true \
+  tf_sfc_trajectory_repair_enabled:=true \
+  tf_sfc_trajectory_repair_seed_fallback_enabled:=true \
+  tf_sfc_trajectory_repair_max_passes:=1 \
+  tf_sfc_post_optimization_repair_enabled:=true \
+  tf_sfc_post_optimization_repair_max_passes:=1 \
+  tf_sfc_experiment_tag:=pca_tf_sfc_v21_bounded_repair
+```
+
+For ablations, disable seed fallback while leaving repair enabled, then disable
+only post-optimization repair. Schema-v21 logs the repair sample source,
+primary trajectory-inflation failure, seed fallback use, and separate outer
+repair attempts/accepts, timing, violations, face count and reason. The v21
+gate is fewer trajectory-inflation failures and strict rejections without a
+face/overlap regression or material P90 planning-time increase.
+
+## EGO schema-v22: aligned seed geometry and repairable hard junctions
+
+The first v21 regression contains three complete fixed-seed missions (50, 71
+and 98 replanning calls). All three reached the goal region, but the new gates
+did not improve robustness: 86 certified-seed fallbacks were all rejected as
+`piece_not_improved`, and 85 post-optimization repairs produced zero accepted
+outer passes. The main rejection reasons were neighbor overlap evaluated at
+the already violating MINCO junction and an inexact hard re-encoding of a
+point that was otherwise inside the repaired intersection.
+
+Schema v22 changes only the proposed TF-SFC repair path:
+
+1. a trajectory-sample candidate keeps the v20 immediate-improvement and
+   global-nonworsening gates;
+2. when that candidate cannot be inflated, a certified-seed candidate is
+   judged by seed containment, positive trajectory-weighted width, the
+   12-face bound and both adjacent overlaps at the aligned seed junctions;
+3. the A* polyline is still simplified and subdivided to at most one seed
+   segment per covered MINCO piece before corridor construction—there is no
+   independent fixed eight-corridor discretization;
+4. `tf_sfc/samples_per_piece:=8` means eight sampling intervals (nine sample
+   points) inside each MINCO piece; it is not a corridor count;
+5. the hard vertex hull retains a feasible preferred junction generator, so
+   an interior point is not lost when the vertex budget is pruned;
+6. a seed-based outer repair may project affected junctions by at most 0.25 m
+   inside the repaired adjacent-corridor intersections before the single
+   L-BFGS pass. A trajectory-sample outer repair retains the 1e-5 m bound.
+
+First v22 regression:
+
+```bash
+roslaunch ego_planner single_drone_interactive.launch \
+  map_seed:=42 \
+  tf_sfc_enabled:=true \
+  tf_sfc_corridor_method:=tf_sfc \
+  tf_sfc_direction_mode:=1 \
+  tf_sfc_allow_partial_corridors:=true \
+  tf_sfc_allow_ego_fallback:=false \
+  tf_sfc_hard_corridor_parameterization:=true \
+  tf_sfc_trajectory_repair_enabled:=true \
+  tf_sfc_trajectory_repair_seed_fallback_enabled:=true \
+  tf_sfc_trajectory_repair_seed_geometric_acceptance_enabled:=true \
+  tf_sfc_trajectory_repair_max_passes:=1 \
+  tf_sfc_post_optimization_repair_enabled:=true \
+  tf_sfc_post_optimization_repair_max_passes:=1 \
+  tf_sfc_post_optimization_repair_max_seed_junction_shift:=0.25 \
+  tf_sfc_experiment_tag:=pca_tf_sfc_v22_aligned_repair
+```
+
+The v22 run schema adds `seed_piece_count`, `corridor_slot_count` and
+`seed_minco_alignment_valid`, plus geometric-acceptance, overlap-anchor,
+candidate-width and junction-shift evidence for both repair stages. A valid
+generated set must have `corridor_slot_count == piece_count`, while
+`seed_piece_count <= piece_count`; `corridor_count` continues to count only
+valid slots and may be smaller under partial-prefix operation.
+
+Primary gates are: at least one accepted certified-seed repair, at least one
+accepted outer repair or a clear downstream safety rejection, no face above
+12, no accepted overlap below 0.02 m, zero final violation on successful calls,
+and no material P90 latency regression. Keep the v21 files unchanged for the
+paired ablation.
+
+## EGO schema-v23: conservative rollback after the v22 regression
+
+The first v22 run did not reach the goal. It accepted 23/26 seed-geometric
+trajectory repairs and 10/10 outer repairs, then ended about 13.19 m from the
+commanded goal. Twelve successful plans were followed by more than 0.05 m of
+motion opposite the commanded-goal direction; eleven of those twelve calls did
+not themselves report an accepted repair.
+
+The global regression came from the v22 preferred-junction encoding, not from
+an eight-versus-five corridor array mismatch. Inserting the current junction
+as a hull generator made its initial normalized-square weights one-hot. At a
+one-hot vector the hard-parameterization tangent projection annihilates the
+spatial gradient, so constrained junctions can remain frozen while L-BFGS
+changes mainly the piece times. Schema v23 therefore restores the v21 hard
+parameterization and strict post-repair re-encoding:
+
+1. do not insert guided or repaired junctions as convex-hull generators;
+2. do not project post-optimization junctions by the v22 0.25 m allowance;
+3. disable seed-geometric direct acceptance and post-optimization repair by
+   default; both remain explicit experimental launch parameters;
+4. retain the v22 alignment/provenance columns so v21--v23 remain directly
+   comparable. A generated call must still satisfy
+   `corridor_slot_count == piece_count`, while a partial certified seed may
+   have `seed_piece_count < piece_count`.
+
+First v23 regression:
+
+```bash
+roslaunch ego_planner single_drone_interactive.launch \
+  map_seed:=42 \
+  tf_sfc_enabled:=true \
+  tf_sfc_corridor_method:=tf_sfc \
+  tf_sfc_direction_mode:=1 \
+  tf_sfc_allow_partial_corridors:=true \
+  tf_sfc_allow_ego_fallback:=false \
+  tf_sfc_hard_corridor_parameterization:=true \
+  tf_sfc_trajectory_repair_enabled:=true \
+  tf_sfc_trajectory_repair_seed_fallback_enabled:=true \
+  tf_sfc_trajectory_repair_seed_geometric_acceptance_enabled:=false \
+  tf_sfc_trajectory_repair_max_passes:=1 \
+  tf_sfc_post_optimization_repair_enabled:=false \
+  tf_sfc_post_optimization_repair_max_passes:=1 \
+  tf_sfc_post_optimization_repair_max_seed_junction_shift:=0.00001 \
+  tf_sfc_experiment_tag:=pca_tf_sfc_v23_conservative
+```
+
+The stop gate is closed-loop progress: no successful plan may be followed by
+more than 0.05 m regression along the fixed commanded start-to-goal axis. Also
+require mission arrival, no face above 12, no accepted overlap below 0.02 m,
+zero sampled final violation on successful calls and no material P90 latency
+increase relative to v21.

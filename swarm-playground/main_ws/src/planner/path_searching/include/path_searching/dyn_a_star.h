@@ -7,6 +7,7 @@
 #include <Eigen/Eigen>
 #include <plan_env/grid_map.h>
 #include <queue>
+#include <functional>
 
 constexpr double inf = 1 >> 20;
 struct GridNode;
@@ -52,6 +53,7 @@ class AStar
 {
 private:
 	GridMap::Ptr grid_map_;
+	bool restrict_to_inflated_map_{false};
 
 	inline void coord2gridIndexFast(const double x, const double y, const double z, int &id_x, int &id_y, int &id_z);
 
@@ -67,7 +69,12 @@ private:
 
 	//bool (*checkOccupancyPtr)( const Eigen::Vector3d &pos );
 
-	inline int checkOccupancy(const Eigen::Vector3d &pos) { return grid_map_->getInflateOccupancy(pos); }
+	inline int checkOccupancy(const Eigen::Vector3d &pos)
+	{
+		if (restrict_to_inflated_map_ && !grid_map_->isInInflatedMap(pos))
+			return -1;
+		return grid_map_->getInflateOccupancy(pos);
+	}
 
 	std::vector<GridNodePtr> retrievePath(GridNodePtr current);
 
@@ -91,7 +98,15 @@ public:
 
 	void initGridMap(GridMap::Ptr occ_map, const Eigen::Vector3i pool_size);
 
-	ASTAR_RET AstarSearch(const double step_size, Eigen::Vector3d start_pt, Eigen::Vector3d end_pt);
+	typedef std::function<bool(const Eigen::Vector3d &, const Eigen::Vector3d &)>
+		EdgeValidator;
+
+	ASTAR_RET AstarSearch(const double step_size, Eigen::Vector3d start_pt,
+								Eigen::Vector3d end_pt,
+								bool restrict_to_inflated_map = false,
+								bool validate_continuous_edges = false,
+								const EdgeValidator &edge_validator = EdgeValidator(),
+								double time_limit_s = 0.20);
 
 	std::vector<Eigen::Vector3d> getPath();
 };

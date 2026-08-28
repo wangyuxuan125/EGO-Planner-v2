@@ -2,6 +2,7 @@
 #define _PLANNER_MANAGER_H_
 
 #include <stdlib.h>
+#include <cstdint>
 
 #include <optimizer/poly_traj_optimizer.h>
 #include <traj_utils/DataDisp.h>
@@ -52,6 +53,18 @@ namespace ego_planner
     bool setLocalTrajFromOpt(const poly_traj::MinJerkOpt &opt, const bool touch_goal);
     inline double getSwarmClearance(void) { return ploy_traj_opt_->get_swarm_clearance_(); }
     inline int getCpsNumPrePiece(void) { return ploy_traj_opt_->get_cps_num_prePiece_(); }
+    inline void setExperimentGoalId(const std::uint64_t goal_id)
+    {
+      experiment_goal_id_ = goal_id;
+      experiment_commanded_goal_valid_ = false;
+    }
+    inline void setExperimentGoal(const std::uint64_t goal_id,
+                                  const Eigen::Vector3d &commanded_goal)
+    {
+      experiment_goal_id_ = goal_id;
+      experiment_commanded_goal_ = commanded_goal;
+      experiment_commanded_goal_valid_ = commanded_goal.allFinite();
+    }
     // inline PtsChk_t getPtsCheck(void) { return ploy_traj_opt_->get_pts_check_(); }
 
     PlanParameters pp_;
@@ -64,6 +77,10 @@ namespace ego_planner
     PolyTrajOptimizer::Ptr ploy_traj_opt_;
 
     int continous_failures_count_{0};
+    std::uint64_t experiment_goal_id_{0};
+    std::uint64_t experiment_replan_sequence_{0};
+    Eigen::Vector3d experiment_commanded_goal_{Eigen::Vector3d::Zero()};
+    bool experiment_commanded_goal_valid_{false};
 
   public:
     typedef unique_ptr<EGOPlannerManager> Ptr;

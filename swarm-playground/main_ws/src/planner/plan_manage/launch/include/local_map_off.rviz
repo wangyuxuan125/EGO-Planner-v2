@@ -315,6 +315,19 @@ Visualization Manager:
                 {}
               Queue Size: 100
               Value: false
+            - Alpha: 0.220000
+              BoundColor: 255; 140; 0
+              Class: decomp_rviz_plugins/PolyhedronArray
+              Enabled: true
+              MeshColor: 0; 170; 255
+              Name: TF-SFC Corridors
+              Scale: 0.030000
+              State: Mesh
+              Topic: /drone_0_ego_planner_node/tf_sfc/polyhedron_array
+              Unreliable: false
+              Value: true
+              VsColor: 255; 255; 255
+              VsScale: 0.030000
             - Alpha: 1
               Buffer Length: 1
               Class: rviz/Path

@@ -1,0 +1,96 @@
+#pragma once
+
+#include "optimizer/tf_sfc/direction_provider.h"
+#include "optimizer/tf_sfc/directional_inflator.h"
+
+#include <plan_env/grid_map.h>
+
+namespace ego_planner
+{
+namespace tf_sfc
+{
+
+class TfSfcManager
+{
+public:
+  TfSfcManager(const GridMap::Ptr &grid_map, const Parameters &parameters);
+
+  bool generate(const poly_traj::Trajectory &trajectory, CorridorVector &corridors);
+
+  // Build each corridor around a continuously validated piecewise-linear seed
+  // while retaining the initial MINCO piece only as a direction hint.
+  bool generateFromSeedPath(const poly_traj::Trajectory &direction_trajectory,
+                            const PointVector &seed_path,
+                            FailureReason uncovered_failure_reason,
+                            CorridorVector &corridors);
+
+  bool generateEllipsoidDecomp(const PointVector &seed_path,
+                               int expected_piece_count,
+                               FailureReason uncovered_failure_reason,
+                               CorridorVector &corridors);
+
+  bool ellipsoidDecompAvailable() const;
+
+  void clearCorridors();
+
+  bool projectJunctions(Eigen::MatrixXd &inner_points,
+                        const CorridorVector &corridors) const;
+
+  bool corridorGradCost(const int piece_id,
+                        const Eigen::Vector3d &point,
+                        Eigen::Vector3d &gradient,
+                        double &cost) const;
+
+  CorridorEvaluation evaluateTrajectory(
+      const poly_traj::Trajectory &trajectory) const;
+
+  // Rebuild only the worst violating proposed corridor. The actual MINCO
+  // samples are tried first; a certified seed segment may be used as a
+  // geometric fallback while retaining MINCO-derived directions. A trajectory
+  // candidate must improve the old curve immediately; a certified-seed
+  // candidate instead uses bounded face/width/seed-junction overlap gates and
+  // is judged after hard remapping and the single bounded optimization.
+  bool repairWorstCorridorForTrajectory(
+      const poly_traj::Trajectory &trajectory,
+      const PointVector &seed_path,
+      CorridorVector &corridors,
+      TrajectoryRepairResult &result);
+
+  // Restore/synchronize a previously validated frozen set after an outer
+  // repair fails a downstream hard-parameterization gate.
+  void setCorridors(const CorridorVector &corridors) { corridors_ = corridors; }
+
+  void setCorridorPenaltyScale(double scale);
+
+  void setPieceSensitivityGramians(
+      const std::vector<Eigen::Matrix3d, Eigen::aligned_allocator<Eigen::Matrix3d>> &gramians);
+
+  const CorridorVector &corridors() const { return corridors_; }
+  const Parameters &parameters() const { return parameters_; }
+
+private:
+  bool computeDirections(const poly_traj::Piece &piece,
+                         const PointVector &samples,
+                         int piece_id,
+                         DirectionSet &directions) const;
+
+  PointVector samplePiece(const poly_traj::Piece &piece) const;
+  PointVector sampleSegment(const Eigen::Vector3d &start,
+                            const Eigen::Vector3d &finish) const;
+  double overlapRadius(const Corridor &lhs, const Corridor &rhs,
+                       const Eigen::Vector3d &shared_point) const;
+  double pieceViolation(const poly_traj::Piece &piece,
+                        const Corridor &corridor) const;
+
+  GridMap::Ptr grid_map_;
+  Parameters parameters_;
+  FrenetDirectionProvider frenet_provider_;
+  PcaDirectionProvider pca_provider_;
+  SensitivityDirectionProvider sensitivity_provider_;
+  DirectionalInflator inflator_;
+  CorridorVector corridors_;
+  double corridor_penalty_scale_{1.0};
+};
+
+} // namespace tf_sfc
+} // namespace ego_planner

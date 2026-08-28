@@ -471,8 +471,11 @@ int main(int argc, char **argv)
 
   ros::Duration(0.5).sleep();
 
-  unsigned int seed = rd();
-  // unsigned int seed = 3728542744;
+  int configured_seed = 1;
+  n.param("ObstacleShape/seed", configured_seed, 1);
+  const unsigned int seed = configured_seed < 0
+                                ? rd()
+                                : static_cast<unsigned int>(configured_seed);
   cout << "seed=" << seed << endl;
   eng.seed(seed);
 
