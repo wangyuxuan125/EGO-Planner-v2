@@ -2122,8 +2122,7 @@ namespace ego_planner
           hard_parameterization_active =
               hard_corridor_parameterization_.configure(
                   tf_corridors_, piece_num_, tf_sfc_parameters_.hard_max_vertices,
-                  tf_sfc_parameters_.hard_vertex_tolerance,
-                  &guidedInnerPts);
+                  tf_sfc_parameters_.hard_vertex_tolerance);
           hard_parameterization_active_ = hard_parameterization_active;
           if (!hard_parameterization_active)
           {
@@ -2414,6 +2413,20 @@ namespace ego_planner
             return false;
           }
 
+          tf_sfc::HardCorridorParameterization repaired_parameterization;
+          if (!repaired_parameterization.configure(
+                  tf_corridors_, piece_num_,
+                  tf_sfc_parameters_.hard_max_vertices,
+                  tf_sfc_parameters_.hard_vertex_tolerance))
+          {
+            tf_corridors_ = previous_corridors;
+            tf_sfc_manager_->setCorridors(previous_corridors);
+            post_optimization_repair_result.accepted = false;
+            post_optimization_repair_result.reason =
+                "hard_parameterization_failure";
+            return false;
+          }
+
           const Eigen::MatrixXd positions = repair_trajectory.getPositions();
           if (positions.cols() != piece_num_ + 1)
           {
@@ -2426,68 +2439,16 @@ namespace ego_planner
           }
           const Eigen::MatrixXd current_inner_points =
               positions.middleCols(1, std::max(piece_num_ - 1, 0));
-          Eigen::MatrixXd repaired_inner_points = current_inner_points;
-          if (!tf_sfc_manager_->projectJunctions(repaired_inner_points,
-                                                  tf_corridors_))
-          {
-            tf_corridors_ = previous_corridors;
-            tf_sfc_manager_->setCorridors(previous_corridors);
-            post_optimization_repair_result.accepted = false;
-            post_optimization_repair_result.reason =
-                "junction_projection_failure";
-            return false;
-          }
-          const double reencode_shift =
-              current_inner_points.size() > 0
-                  ? (repaired_inner_points - current_inner_points)
-                        .cwiseAbs()
-                        .maxCoeff()
-                  : 0.0;
-          post_optimization_repair_result.junction_reencode_shift_m =
-              reencode_shift;
-          const double allowed_reencode_shift =
-              repair_result.seed_fallback_used
-                  ? tf_sfc_parameters_
-                        .post_optimization_repair_max_seed_junction_shift
-                  : 1.0e-5;
-          if (!std::isfinite(reencode_shift) ||
-              reencode_shift > allowed_reencode_shift + 1.0e-12)
-          {
-            tf_corridors_ = previous_corridors;
-            tf_sfc_manager_->setCorridors(previous_corridors);
-            post_optimization_repair_result.accepted = false;
-            post_optimization_repair_result.reason =
-                repair_result.seed_fallback_used
-                    ? "seed_reencode_shift_exceeded"
-                    : "trajectory_reencode_shift";
-            return false;
-          }
-
-          tf_sfc::HardCorridorParameterization repaired_parameterization;
-          if (!repaired_parameterization.configure(
-                  tf_corridors_, piece_num_,
-                  tf_sfc_parameters_.hard_max_vertices,
-                  tf_sfc_parameters_.hard_vertex_tolerance,
-                  &repaired_inner_points))
-          {
-            tf_corridors_ = previous_corridors;
-            tf_sfc_manager_->setCorridors(previous_corridors);
-            post_optimization_repair_result.accepted = false;
-            post_optimization_repair_result.reason =
-                "hard_parameterization_failure";
-            return false;
-          }
-
           Eigen::VectorXd repaired_spatial;
           Eigen::MatrixXd decoded_inner_points;
-          if (!repaired_parameterization.encode(repaired_inner_points,
+          if (!repaired_parameterization.encode(current_inner_points,
                                                  repaired_spatial) ||
               !repaired_parameterization.decode(repaired_spatial,
                                                  decoded_inner_points) ||
-              decoded_inner_points.rows() != repaired_inner_points.rows() ||
-              decoded_inner_points.cols() != repaired_inner_points.cols() ||
-              (repaired_inner_points.size() > 0 &&
-               (decoded_inner_points - repaired_inner_points)
+              decoded_inner_points.rows() != current_inner_points.rows() ||
+              decoded_inner_points.cols() != current_inner_points.cols() ||
+              (current_inner_points.size() > 0 &&
+               (decoded_inner_points - current_inner_points)
                        .cwiseAbs()
                        .maxCoeff() > 1.0e-5))
           {
@@ -4897,18 +4858,18 @@ namespace ego_planner
         "tf_sfc/trajectory_repair_seed_geometric_acceptance_enabled",
         tf_sfc_parameters_
             .trajectory_repair_seed_geometric_acceptance_enabled,
-        true);
+        false);
     nh.param("tf_sfc/trajectory_repair_max_passes",
              tf_sfc_parameters_.trajectory_repair_max_passes, 1);
     nh.param("tf_sfc/post_optimization_repair_enabled",
-             tf_sfc_parameters_.post_optimization_repair_enabled, true);
+             tf_sfc_parameters_.post_optimization_repair_enabled, false);
     nh.param("tf_sfc/post_optimization_repair_max_passes",
              tf_sfc_parameters_.post_optimization_repair_max_passes, 1);
     nh.param(
         "tf_sfc/post_optimization_repair_max_seed_junction_shift",
         tf_sfc_parameters_
             .post_optimization_repair_max_seed_junction_shift,
-        0.25);
+        1.0e-5);
     nh.param("tf_sfc/trajectory_repair_trigger",
              tf_sfc_parameters_.trajectory_repair_trigger, 1.0e-3);
     nh.param("tf_sfc/trajectory_repair_min_improvement",
@@ -4935,9 +4896,9 @@ namespace ego_planner
             .post_optimization_repair_max_seed_junction_shift < 0.0)
     {
       ROS_WARN("tf_sfc/post_optimization_repair_max_seed_junction_shift "
-               "must be non-negative; using 0.25 m.");
+               "must be non-negative; using 1e-5 m.");
       tf_sfc_parameters_
-          .post_optimization_repair_max_seed_junction_shift = 0.25;
+          .post_optimization_repair_max_seed_junction_shift = 1.0e-5;
     }
     if (tf_sfc_parameters_.trajectory_repair_trigger < 0.0)
     {
