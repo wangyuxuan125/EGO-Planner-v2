@@ -1464,6 +1464,12 @@ namespace ego_planner
     std::string terminal_failure_reason = "none";
     bool corridor_retry_requested = false;
     bool strict_corridor_rejected = false;
+    bool progress_guard_evaluated = false;
+    bool progress_guard_passed = true;
+    double min_initial_seed_progress_m = 0.0;
+    double max_target_axis_progress_drop_m = 0.0;
+    double max_target_overshoot_m = 0.0;
+    std::string progress_guard_reason = "not_evaluated";
     bool corridor_generation_attempted = false;
     const std::string requested_corridor_method = tf_sfc_parameters_.enabled
                                                       ? tf_sfc_parameters_.corridor_method
@@ -2358,6 +2364,96 @@ namespace ego_planner
       }
       return true;
     };
+    auto evaluateTrajectoryProgress = [&]() {
+      progress_guard_evaluated = false;
+      progress_guard_passed = true;
+      progress_guard_reason = "disabled";
+      min_initial_seed_progress_m = 0.0;
+      max_target_axis_progress_drop_m = 0.0;
+      max_target_overshoot_m = 0.0;
+      if (!tf_sfc_parameters_.progress_guard_enabled ||
+          !tf_sfc_generated || fallback_to_ego)
+      {
+        return true;
+      }
+
+      const poly_traj::Trajectory &trajectory = jerkOpt_.getTraj();
+      const Eigen::Vector3d start = iniState.col(0);
+      const Eigen::Vector3d target = finState.col(0);
+      Eigen::Vector3d target_axis = target - start;
+      const double target_distance = target_axis.norm();
+      if (trajectory.getPieceNum() <= 0 || target_distance <= 1.0e-6)
+      {
+        progress_guard_reason = "degenerate_target";
+        return true;
+      }
+      target_axis /= target_distance;
+      Eigen::Vector3d seed_axis = target_axis;
+      if (active_seed_path.size() >= 2 &&
+          (active_seed_path[1] - active_seed_path[0]).norm() > 1.0e-6)
+      {
+        seed_axis =
+            (active_seed_path[1] - active_seed_path[0]).normalized();
+      }
+
+      progress_guard_evaluated = true;
+      progress_guard_reason = "accepted";
+      const int sample_count = std::max(
+          8, tf_sfc_parameters_.samples_per_piece *
+                 trajectory.getPieceNum());
+      const double duration = trajectory.getTotalDuration();
+      const double initial_horizon = std::min(
+          duration, tf_sfc_parameters_.progress_guard_horizon_s);
+      double peak_target_progress = 0.0;
+      min_initial_seed_progress_m =
+          std::numeric_limits<double>::infinity();
+      for (int sample_id = 0; sample_id <= sample_count; ++sample_id)
+      {
+        const double time = duration *
+                            static_cast<double>(sample_id) /
+                            static_cast<double>(sample_count);
+        const Eigen::Vector3d displacement =
+            trajectory.getPos(time) - start;
+        const double target_progress = displacement.dot(target_axis);
+        peak_target_progress = std::max(peak_target_progress,
+                                        target_progress);
+        max_target_axis_progress_drop_m = std::max(
+            max_target_axis_progress_drop_m,
+            peak_target_progress - target_progress);
+        max_target_overshoot_m = std::max(
+            max_target_overshoot_m,
+            target_progress - target_distance);
+        if (time <= initial_horizon + 1.0e-9)
+        {
+          min_initial_seed_progress_m = std::min(
+              min_initial_seed_progress_m,
+              displacement.dot(seed_axis));
+        }
+      }
+      if (!std::isfinite(min_initial_seed_progress_m))
+      {
+        min_initial_seed_progress_m = 0.0;
+      }
+      if (min_initial_seed_progress_m <
+          -tf_sfc_parameters_.max_initial_progress_regression)
+      {
+        progress_guard_passed = false;
+        progress_guard_reason = "initial_seed_regression";
+      }
+      else if (max_target_axis_progress_drop_m >
+               tf_sfc_parameters_.max_target_axis_progress_drop)
+      {
+        progress_guard_passed = false;
+        progress_guard_reason = "target_axis_progress_drop";
+      }
+      else if (max_target_overshoot_m >
+               tf_sfc_parameters_.max_target_overshoot)
+      {
+        progress_guard_passed = false;
+        progress_guard_reason = "target_overshoot";
+      }
+      return progress_guard_passed;
+    };
     auto rememberCorridorCandidate = [&](const double violation) {
       std::copy(x_init.begin(), x_init.end(), best_corridor_x.begin());
       best_corridor_candidate_valid = true;
@@ -2605,8 +2701,22 @@ namespace ego_planner
           if (finelyCheckAndSetConstraintPoints(segments_nouse, jerkOpt_, false) == CHK_RET::OBS_FREE)
           {
             final_collision_free = true;
+            if (!evaluateTrajectoryProgress())
+            {
+              terminal_failure_reason = progress_guard_reason;
+              ROS_ERROR_THROTTLE(
+                  1.0,
+                  "TF-SFC progress guard rejected a collision-free "
+                  "trajectory (%s): initial %.3f m, max drop %.3f m, "
+                  "overshoot %.3f m.",
+                  progress_guard_reason.c_str(),
+                  min_initial_seed_progress_m,
+                  max_target_axis_progress_drop_m,
+                  max_target_overshoot_m);
+            }
             const bool strict_check_enabled =
-                tf_sfc_generated && !fallback_to_ego && tf_sfc_manager_ &&
+                progress_guard_passed && tf_sfc_generated &&
+                !fallback_to_ego && tf_sfc_manager_ &&
                 tf_sfc_parameters_.enforce_final_corridor;
             tf_sfc::CorridorEvaluation enforcement_evaluation;
             if (strict_check_enabled)
@@ -2707,7 +2817,8 @@ namespace ego_planner
                 }
               }
             }
-            else if (!strict_corridor_rejected &&
+            else if (progress_guard_passed &&
+                     !strict_corridor_rejected &&
                      !corridor_retry_requested)
             {
               flag_success = true;
@@ -2889,11 +3000,14 @@ namespace ego_planner
       record.run_id = tf_sfc_experiment_logger_->makeRunId(drone_id_);
       record.experiment_tag = tf_sfc_experiment_logger_->experimentTag();
       record.status = flag_success ? "success" :
-                      (strict_corridor_rejected ? "corridor_violation_failure" :
+                      ((progress_guard_evaluated &&
+                        !progress_guard_passed)
+                           ? "progress_guard_failure" :
+                       (strict_corridor_rejected ? "corridor_violation_failure" :
                        (last_lbfgs_result == lbfgs::LBFGSERR_CANCELED ? "rebound_limit" :
                         (final_obstacle_collision ? "obstacle_collision_failure" :
                          (final_swarm_clearance_failure ? "swarm_clearance_failure" :
-                          "solver_failure"))));
+                          "solver_failure")))));
       record.timestamp_s = t0.toSec();
       record.requested_method = requested_corridor_method;
       record.method = fallback_to_ego ? "ego" : requested_corridor_method;
@@ -3032,6 +3146,16 @@ namespace ego_planner
               ? tf_sfc_parameters_.weight * corridor_penalty_scale
               : 0.0;
       record.strict_corridor_rejected = strict_corridor_rejected;
+      record.progress_guard_enabled =
+          tf_sfc_parameters_.progress_guard_enabled;
+      record.progress_guard_evaluated = progress_guard_evaluated;
+      record.progress_guard_passed = progress_guard_passed;
+      record.min_initial_seed_progress_m =
+          min_initial_seed_progress_m;
+      record.max_target_axis_progress_drop_m =
+          max_target_axis_progress_drop_m;
+      record.max_target_overshoot_m = max_target_overshoot_m;
+      record.progress_guard_reason = progress_guard_reason;
       record.corridor_candidate_count = corridor_candidate_count;
       record.corridor_candidate_accept_count =
           corridor_candidate_accept_count;
@@ -4863,6 +4987,8 @@ namespace ego_planner
              tf_sfc_parameters_.trajectory_repair_max_passes, 1);
     nh.param("tf_sfc/post_optimization_repair_enabled",
              tf_sfc_parameters_.post_optimization_repair_enabled, false);
+    nh.param("tf_sfc/progress_guard_enabled",
+             tf_sfc_parameters_.progress_guard_enabled, true);
     nh.param("tf_sfc/post_optimization_repair_max_passes",
              tf_sfc_parameters_.post_optimization_repair_max_passes, 1);
     nh.param(
@@ -4874,6 +5000,16 @@ namespace ego_planner
              tf_sfc_parameters_.trajectory_repair_trigger, 1.0e-3);
     nh.param("tf_sfc/trajectory_repair_min_improvement",
              tf_sfc_parameters_.trajectory_repair_min_improvement, 1.0e-4);
+    nh.param("tf_sfc/face_quality_weight",
+             tf_sfc_parameters_.face_quality_weight, 0.20);
+    nh.param("tf_sfc/progress_guard_horizon_s",
+             tf_sfc_parameters_.progress_guard_horizon_s, 1.0);
+    nh.param("tf_sfc/max_initial_progress_regression",
+             tf_sfc_parameters_.max_initial_progress_regression, 0.05);
+    nh.param("tf_sfc/max_target_axis_progress_drop",
+             tf_sfc_parameters_.max_target_axis_progress_drop, 0.25);
+    nh.param("tf_sfc/max_target_overshoot",
+             tf_sfc_parameters_.max_target_overshoot, 0.15);
     if (tf_sfc_parameters_.seed_clearance_astar_time_limit <= 0.0)
     {
       ROS_WARN("tf_sfc/seed_clearance_astar_time_limit must be positive; "
@@ -4950,6 +5086,16 @@ namespace ego_planner
         std::max(tf_sfc_parameters_.junction_refine_step, 1.0e-3);
     tf_sfc_parameters_.max_inflation_distance = std::max(tf_sfc_parameters_.max_inflation_distance, 0.0);
     tf_sfc_parameters_.inflation_step = std::max(tf_sfc_parameters_.inflation_step, 1.0e-3);
+    tf_sfc_parameters_.face_quality_weight =
+        std::max(tf_sfc_parameters_.face_quality_weight, 0.0);
+    tf_sfc_parameters_.progress_guard_horizon_s =
+        std::max(tf_sfc_parameters_.progress_guard_horizon_s, 0.0);
+    tf_sfc_parameters_.max_initial_progress_regression =
+        std::max(tf_sfc_parameters_.max_initial_progress_regression, 0.0);
+    tf_sfc_parameters_.max_target_axis_progress_drop =
+        std::max(tf_sfc_parameters_.max_target_axis_progress_drop, 0.0);
+    tf_sfc_parameters_.max_target_overshoot =
+        std::max(tf_sfc_parameters_.max_target_overshoot, 0.0);
     tf_sfc_parameters_.weight = std::max(tf_sfc_parameters_.weight, 0.0);
     tf_sfc_parameters_.enforcement_weight_multiplier =
         std::max(tf_sfc_parameters_.enforcement_weight_multiplier, 1.0);
