@@ -20,8 +20,7 @@ public:
   bool configure(const CorridorVector &corridors,
                  int piece_count,
                  int max_vertices,
-                 double vertex_tolerance,
-                 const Eigen::MatrixXd *preferred_junctions = nullptr);
+                 double vertex_tolerance);
 
   void clear();
 
