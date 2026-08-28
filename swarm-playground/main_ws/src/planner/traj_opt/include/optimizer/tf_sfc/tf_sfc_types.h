@@ -125,6 +125,10 @@ struct Parameters
   // One outer repair/re-optimization is allowed only after ordinary strict
   // corridor continuation would otherwise reject a collision-free candidate.
   bool post_optimization_repair_enabled = false;
+  // Reject a collision-free optimized trajectory when it initially moves
+  // opposite the certified seed tangent, makes a large target-axis U-turn,
+  // or overshoots the local target before returning.
+  bool progress_guard_enabled = true;
   bool visualization_enabled = true;
   bool log_enabled = true;
   std::string visualization_frame = "world";
@@ -172,6 +176,14 @@ struct Parameters
   double seed_clearance_astar_time_limit = 0.20;
   double trajectory_repair_trigger = 1.0e-3;
   double trajectory_repair_min_improvement = 1.0e-4;
+  // Region quality uses trajectory-weighted squared width [m^2] minus this
+  // cost for every retained half-space face. This makes the FIRI face-count
+  // trade-off explicit while max_faces remains a hard upper bound.
+  double face_quality_weight = 0.20;
+  double progress_guard_horizon_s = 1.0;
+  double max_initial_progress_regression = 0.05;
+  double max_target_axis_progress_drop = 0.25;
+  double max_target_overshoot = 0.15;
   // Retained for launch-file compatibility with v22. v23 restores strict
   // re-encoding and never projects a post-optimization junction by this amount.
   double post_optimization_repair_max_seed_junction_shift = 1.0e-5;
@@ -181,6 +193,8 @@ struct DirectionSet
 {
   Eigen::Matrix3d frame = Eigen::Matrix3d::Identity();
   Eigen::Vector3d utility = Eigen::Vector3d::Ones();
+  std::string metric_source = "not_evaluated";
+  double velocity_alignment_cosine = 0.0;
   DirectionMode requested_mode = DirectionMode::PCA;
   DirectionMode used_mode = DirectionMode::PCA;
   bool used_fallback = false;
@@ -198,6 +212,10 @@ struct CorridorMetrics
   bool face_budget_saturated = false;
   double generation_time_ms = 0.0;
   double weighted_width = 0.0;
+  double region_quality_score = 0.0;
+  double face_quality_penalty = 0.0;
+  std::string direction_metric_source = "not_evaluated";
+  double direction_velocity_alignment_cosine = 0.0;
   double min_sample_slack = -std::numeric_limits<double>::infinity();
   double anchor_clearance_radius = -std::numeric_limits<double>::infinity();
   double min_obstacle_sample_distance_m =
