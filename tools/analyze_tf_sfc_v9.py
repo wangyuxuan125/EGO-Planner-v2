@@ -122,6 +122,48 @@ def closed_loop_regressions(rows, threshold):
     return transition_count, regressions
 
 
+def finite_column(rows, key):
+    return [value for value in (as_float(row, key) for row in rows)
+            if math.isfinite(value)]
+
+
+def summarize_corridors(tag, rows):
+    valid_rows = [row for row in rows if as_bool(row, "valid")]
+    if not valid_rows:
+        print(f"corridor geometry [{tag}]: no valid corridors")
+        return
+    faces = finite_column(valid_rows, "face_count")
+    widths = finite_column(valid_rows, "weighted_width")
+    quality = finite_column(valid_rows, "region_quality_score")
+    overlap = [value for value in finite_column(
+        valid_rows, "overlap_radius_to_next") if value >= 0.0]
+    alignment = finite_column(
+        valid_rows, "direction_velocity_alignment_cosine"
+    )
+    candidate_evaluations = finite_column(
+        valid_rows, "inflation_candidate_evaluation_count"
+    )
+    sources = Counter(row.get("direction_metric_source", "unknown")
+                      for row in valid_rows)
+    print(
+        f"corridor geometry [{tag}]: valid={len(valid_rows)}/{len(rows)}; "
+        f"faces mean={statistics.mean(faces):.3f} max={max(faces):.0f}; "
+        f"weighted-width median={percentile(widths, 0.5):.3f}; "
+        f"quality median={percentile(quality, 0.5):.3f}"
+    )
+    print(
+        f"corridor overlap [{tag}]: min={min(overlap):.6f} m "
+        f"median={percentile(overlap, 0.5):.6f} m"
+        if overlap else f"corridor overlap [{tag}]: n/a"
+    )
+    print(
+        f"direction evidence [{tag}]: sources={dict(sources)}; "
+        f"velocity-alignment median={percentile(alignment, 0.5):.3f}; "
+        f"inflation candidate evaluations p90="
+        f"{percentile(candidate_evaluations, 0.9):.0f}"
+    )
+
+
 def summarize(tag, rows, progress_regression_threshold):
     events = defaultdict(list)
     goals = defaultdict(list)
@@ -218,6 +260,37 @@ def summarize(tag, rows, progress_regression_threshold):
               f"{rate_text(repair_accepts, repair_attempts)}")
         print(f"post-optimization repair acceptance: "
               f"{rate_text(post_accepts, post_attempts)}")
+    if "progress_guard_evaluated" in rows[0]:
+        progress_rows = [row for row in rows
+                         if as_bool(row, "progress_guard_evaluated")]
+        progress_passes = sum(as_bool(row, "progress_guard_passed")
+                              for row in progress_rows)
+        progress_reasons = Counter(
+            row.get("progress_guard_reason", "unknown")
+            for row in progress_rows if not as_bool(
+                row, "progress_guard_passed")
+        )
+        print(f"progress guard acceptance: "
+              f"{rate_text(progress_passes, len(progress_rows))}; "
+              f"rejections={dict(progress_reasons)}")
+    if "face_sample_pairs_per_evaluation" in rows[0]:
+        face_sample_pairs = finite_column(
+            successful_rows, "face_sample_pairs_per_evaluation"
+        )
+        direct_variables = finite_column(
+            successful_rows, "direct_spatial_variable_count"
+        )
+        hard_variables = finite_column(
+            successful_rows, "hard_spatial_variable_count"
+        )
+        print(
+            "successful constraint workload: face-sample pairs/evaluation "
+            f"median={percentile(face_sample_pairs, 0.5):.1f} "
+            f"p90={percentile(face_sample_pairs, 0.9):.1f}; "
+            f"direct/hard spatial variables median="
+            f"{percentile(direct_variables, 0.5):.1f}/"
+            f"{percentile(hard_variables, 0.5):.1f}"
+        )
     print(f"successful total planning ms: median="
           f"{statistics.median([v for v in total_ms if math.isfinite(v)]):.3f} "
           f"p95={percentile(total_ms, 0.95):.3f}"
@@ -240,6 +313,10 @@ def main():
         default=0.05,
         help="closed-loop reverse-motion threshold in metres (default: 0.05)",
     )
+    parser.add_argument(
+        "--corridors-csv",
+        help="optional matching schema-v24 corridor CSV",
+    )
     args = parser.parse_args()
 
     with open(args.runs_csv, newline="") as stream:
@@ -256,6 +333,14 @@ def main():
         groups[row.get("experiment_tag", "unknown")].append(row)
     for tag in sorted(groups):
         summarize(tag, groups[tag], args.max_progress_regression)
+    if args.corridors_csv:
+        with open(args.corridors_csv, newline="") as stream:
+            corridor_rows = list(csv.DictReader(stream))
+        corridor_groups = defaultdict(list)
+        for row in corridor_rows:
+            corridor_groups[row.get("experiment_tag", "unknown")].append(row)
+        for tag in sorted(corridor_groups):
+            summarize_corridors(tag, corridor_groups[tag])
 
 
 if __name__ == "__main__":
