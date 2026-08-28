@@ -11,17 +11,17 @@ The paper claim, development milestones, fairness rules and freeze gates are def
 - A sampled final-corridor gate performs bounded penalty continuation and rejects unresolved corridor violations instead of counting them as TF-SFC successes. Every continuation candidate must remain finite and collision-free and improve the previous best violation; otherwise v6 restores the best safe iterate before returning failure.
 - EllipsoidDecomp seeding handles same-voxel/zero-length queries with a collision-checked short segment, optionally aligns the first seed segment with measured velocity, traverses every intersected voxel, and retries ordinary A* once when final velocity-seed validation reports occupancy. v18 performs one shared clearance-aware A* rebuild whenever the ordinary corridor seed fails junction-clearance certification; TF-SFC and EllipsoidDecomp use the same edge certificate, map, goal, overlap radius and piece budget, and the retry time/provenance is logged explicitly.
 - DecompROS publication is kept separate from corridor generation and optimization.
-- Schema v22 explicitly records the number of MINCO pieces, resampled seed
+- Schema v23 retains explicit counts of MINCO pieces, resampled seed
   segments and corridor slots. `samples_per_piece=8` is a verification/
-  quadrature resolution, not an eight-corridor backend. Certified-seed repair
-  uses the aligned seed junction for overlap and permits one bounded,
-  safety-gated outer re-optimization.
+  quadrature resolution, not an eight-corridor backend. After the first v22
+  regression, seed-geometric direct acceptance and outer repair are disabled
+  by default and the v21 differentiable hard parameterization is restored.
 
 ## Required before freezing paper results
 
 1. Run clean Release builds with the exact ROS Noetic, Eigen, DecompUtil and DecompROS revisions recorded in a lock/setup document.
 2. Execute regression tests for at least 30 fixed seeds before large experiments. Confirm that every active hard junction has near-zero `max_junction_violation_final_m`, compare v18 success/latency with the shared clearance-aware A* enabled versus the v17 occupancy-A* front end, and retain the v7 hard-junction and v6 soft-only ablations, and verify no increase in final obstacle or swarm-clearance failures.
-3. Freeze the final CSV schema (v22 is the current diagnostic schema) and its compatible aggregation script after clean runtime validation. The tool separates candidate calls, planning events, goals, search, corridor generation and conditional optimization. Add an FSM-level goal-arrival/timeout/collision record before calling any aggregate a mission-success rate: schema v22 identifies a goal, retry chain, seed/MINCO alignment and repair provenance but still does not prove execution reached it.
+3. Freeze the final CSV schema (v23 is the current diagnostic schema) and its compatible aggregation script after clean runtime validation. The tool separates candidate calls, planning events, goals, search, corridor generation and conditional optimization. Add an FSM-level goal-arrival/timeout/collision record before calling any aggregate a mission-success rate: schema v23 identifies a goal, retry chain, seed/MINCO alignment and repair provenance but still does not prove execution reached it.
 4. Add continuous or sufficiently conservative trajectory-versus-corridor verification. The current `max_corridor_violation_*` values are quadrature-sampled diagnostics, not a mathematical continuous-time certificate.
 5. Define identical maps, start/goal pairs, dynamics, obstacle inflation, time limits, warm-up policy and failure denominators for all EGO and GCOPTER baselines.
 6. Run the full method matrix and ablations: original EGO, OBB without/with overlap handling, EllipsoidDecomp with extension 0/0.20 m, and GCOPTER FIRI/EllipsoidDecomp/TF-SFC.
