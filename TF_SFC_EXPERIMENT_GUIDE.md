@@ -635,3 +635,55 @@ accepted outer repair or a clear downstream safety rejection, no face above
 12, no accepted overlap below 0.02 m, zero final violation on successful calls,
 and no material P90 latency regression. Keep the v21 files unchanged for the
 paired ablation.
+
+## EGO schema-v23: conservative rollback after the v22 regression
+
+The first v22 run did not reach the goal. It accepted 23/26 seed-geometric
+trajectory repairs and 10/10 outer repairs, then ended about 13.19 m from the
+commanded goal. Twelve successful plans were followed by more than 0.05 m of
+motion opposite the commanded-goal direction; eleven of those twelve calls did
+not themselves report an accepted repair.
+
+The global regression came from the v22 preferred-junction encoding, not from
+an eight-versus-five corridor array mismatch. Inserting the current junction
+as a hull generator made its initial normalized-square weights one-hot. At a
+one-hot vector the hard-parameterization tangent projection annihilates the
+spatial gradient, so constrained junctions can remain frozen while L-BFGS
+changes mainly the piece times. Schema v23 therefore restores the v21 hard
+parameterization and strict post-repair re-encoding:
+
+1. do not insert guided or repaired junctions as convex-hull generators;
+2. do not project post-optimization junctions by the v22 0.25 m allowance;
+3. disable seed-geometric direct acceptance and post-optimization repair by
+   default; both remain explicit experimental launch parameters;
+4. retain the v22 alignment/provenance columns so v21--v23 remain directly
+   comparable. A generated call must still satisfy
+   `corridor_slot_count == piece_count`, while a partial certified seed may
+   have `seed_piece_count < piece_count`.
+
+First v23 regression:
+
+```bash
+roslaunch ego_planner single_drone_interactive.launch \
+  map_seed:=42 \
+  tf_sfc_enabled:=true \
+  tf_sfc_corridor_method:=tf_sfc \
+  tf_sfc_direction_mode:=1 \
+  tf_sfc_allow_partial_corridors:=true \
+  tf_sfc_allow_ego_fallback:=false \
+  tf_sfc_hard_corridor_parameterization:=true \
+  tf_sfc_trajectory_repair_enabled:=true \
+  tf_sfc_trajectory_repair_seed_fallback_enabled:=true \
+  tf_sfc_trajectory_repair_seed_geometric_acceptance_enabled:=false \
+  tf_sfc_trajectory_repair_max_passes:=1 \
+  tf_sfc_post_optimization_repair_enabled:=false \
+  tf_sfc_post_optimization_repair_max_passes:=1 \
+  tf_sfc_post_optimization_repair_max_seed_junction_shift:=0.00001 \
+  tf_sfc_experiment_tag:=pca_tf_sfc_v23_conservative
+```
+
+The stop gate is closed-loop progress: no successful plan may be followed by
+more than 0.05 m regression along the fixed commanded start-to-goal axis. Also
+require mission arrival, no face above 12, no accepted overlap below 0.02 m,
+zero sampled final violation on successful calls and no material P90 latency
+increase relative to v21.
