@@ -61,6 +61,9 @@
     <arg name="tf_sfc_max_initial_progress_regression" default="0.05"/>
     <arg name="tf_sfc_max_target_axis_progress_drop" default="0.25"/>
     <arg name="tf_sfc_max_target_overshoot" default="0.15"/>
+    <arg name="tf_sfc_objective_compliance_fd_step" default="0.02"/>
+    <arg name="tf_sfc_objective_compliance_eigenvalue_floor_ratio" default="0.0001"/>
+    <arg name="tf_sfc_objective_compliance_absolute_floor" default="0.000001"/>
 
     <!-- map -->
     <node pkg ="map_generator" name ="random_forest" type ="random_forest" output = "screen">
@@ -151,5 +154,8 @@
         <arg name="tf_sfc_max_initial_progress_regression" value="$(arg tf_sfc_max_initial_progress_regression)"/>
         <arg name="tf_sfc_max_target_axis_progress_drop" value="$(arg tf_sfc_max_target_axis_progress_drop)"/>
         <arg name="tf_sfc_max_target_overshoot" value="$(arg tf_sfc_max_target_overshoot)"/>
+        <arg name="tf_sfc_objective_compliance_fd_step" value="$(arg tf_sfc_objective_compliance_fd_step)"/>
+        <arg name="tf_sfc_objective_compliance_eigenvalue_floor_ratio" value="$(arg tf_sfc_objective_compliance_eigenvalue_floor_ratio)"/>
+        <arg name="tf_sfc_objective_compliance_absolute_floor" value="$(arg tf_sfc_objective_compliance_absolute_floor)"/>
     </include>
 </launch>
