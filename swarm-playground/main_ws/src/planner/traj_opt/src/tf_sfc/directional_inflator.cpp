@@ -407,6 +407,15 @@ bool DirectionalInflator::inflate(const PointVector &samples,
       accepted_separation_failure_at_endpoint;
   corridor.metrics.direction_fallback = directions.used_fallback;
   corridor.metrics.direction_metric_source = directions.metric_source;
+  corridor.metrics.direction_metric_eigenvalue_max =
+      directions.metric_eigenvalues(0);
+  corridor.metrics.direction_metric_eigenvalue_mid =
+      directions.metric_eigenvalues(1);
+  corridor.metrics.direction_metric_eigenvalue_min =
+      directions.metric_eigenvalues(2);
+  corridor.metrics.direction_metric_condition_number =
+      directions.metric_eigenvalues(0) /
+      std::max(directions.metric_eigenvalues(2), 1.0e-12);
   corridor.metrics.direction_velocity_alignment_cosine =
       directions.velocity_alignment_cosine;
   corridor.metrics.valid = true;
