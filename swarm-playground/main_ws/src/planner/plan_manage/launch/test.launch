@@ -156,6 +156,12 @@
         <param name="tf_sfc/post_optimization_repair_max_seed_junction_shift" value="0.00001" type="double"/>
         <param name="tf_sfc/trajectory_repair_trigger" value="0.001" type="double"/>
         <param name="tf_sfc/trajectory_repair_min_improvement" value="0.0001" type="double"/>
+        <param name="tf_sfc/face_quality_weight" value="0.20" type="double"/>
+        <param name="tf_sfc/progress_guard_enabled" value="true" type="bool"/>
+        <param name="tf_sfc/progress_guard_horizon_s" value="1.0" type="double"/>
+        <param name="tf_sfc/max_initial_progress_regression" value="0.05" type="double"/>
+        <param name="tf_sfc/max_target_axis_progress_drop" value="0.25" type="double"/>
+        <param name="tf_sfc/max_target_overshoot" value="0.15" type="double"/>
         <param name="tf_sfc/visualization_enabled" value="true" type="bool"/>
         <param name="tf_sfc/visualization_frame" value="world" type="string"/>
         <param name="tf_sfc/min_valid_pieces" value="1" type="int"/>
