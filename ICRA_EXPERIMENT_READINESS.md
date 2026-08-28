@@ -21,12 +21,18 @@ The paper claim, development milestones, fairness rules and freeze gates are def
   post-collision progress guard. The 12-face cap and 0.02 m adjacent-overlap
   threshold remain hard gates. These mechanisms are diagnostic until Release
   runtime and closed-loop arrival tests pass.
+- Schema v25 keeps v24 as the proxy ablation and adds a separate strict mode 3.
+  It estimates the complete fixed-duration pre-corridor spatial-objective
+  Hessian by central differences of the analytic MINCO waypoint gradient,
+  symmetrizes and PSD-regularizes it, and projects its inverse to a 3x3
+  workspace compliance per piece. Raw curvature, regularization, condition,
+  evaluation count and time are logged explicitly.
 
 ## Required before freezing paper results
 
 1. Run clean Release builds with the exact ROS Noetic, Eigen, DecompUtil and DecompROS revisions recorded in a lock/setup document.
 2. Execute regression tests for at least 30 fixed seeds before large experiments. Confirm that every active hard junction has near-zero `max_junction_violation_final_m`, compare v18 success/latency with the shared clearance-aware A* enabled versus the v17 occupancy-A* front end, and retain the v7 hard-junction and v6 soft-only ablations, and verify no increase in final obstacle or swarm-clearance failures.
-3. Freeze the final CSV schema (v24 is the current diagnostic schema) and its compatible aggregation script after clean runtime validation. The tool separates candidate calls, planning events, goals, search, corridor generation and conditional optimization. Add an FSM-level goal-arrival/timeout/collision record before calling any aggregate a mission-success rate: schema v24 identifies a goal, retry chain, seed/MINCO alignment, direction provenance, progress rejection and repair provenance but still does not prove execution reached it.
+3. Freeze the final CSV schema (v25 is the current diagnostic schema) and its compatible aggregation script after clean runtime validation. The tool separates candidate calls, planning events, goals, search, metric construction, corridor generation and conditional optimization. Add an FSM-level goal-arrival/timeout/collision record before calling any aggregate a mission-success rate: schema v25 identifies a goal, retry chain, seed/MINCO alignment, direction provenance, local-curvature regularization, progress rejection and repair provenance but still does not prove execution reached it.
 4. Add continuous or sufficiently conservative trajectory-versus-corridor verification. The current `max_corridor_violation_*` values are quadrature-sampled diagnostics, not a mathematical continuous-time certificate.
 5. Define identical maps, start/goal pairs, dynamics, obstacle inflation, time limits, warm-up policy and failure denominators for all EGO and GCOPTER baselines.
 6. Run the full method matrix and ablations: original EGO, OBB without/with overlap handling, EllipsoidDecomp with extension 0/0.20 m, and GCOPTER FIRI/EllipsoidDecomp/TF-SFC.
@@ -34,7 +40,7 @@ The paper claim, development milestones, fairness rules and freeze gates are def
 
 ## Required if the paper claims the full TF-SFC method
 
-- Validate the v24 anisotropic differential-state Gramian against a deformation metric from the complete local MINCO objective (including environment/dynamic curvature), then feed the latter through the existing external Gramian API if the paper claims exact sensitivity. Formal mode-2 runs must set `tf_sfc_allow_direction_fallback:=false`; PCA fallback data is an ablation, never the main method.
+- Runtime-validate v25 mode 3 against v24 mode 2 and finite-difference-step/eigenvalue-floor sensitivity tests. Formal mode-3 runs must set `tf_sfc_allow_direction_fallback:=false`; PCA fallback data is an ablation, never the main method. The correct claim is local fixed-duration full-spatial-objective compliance, not a global nonlinear Hessian certificate.
 - Validate the v24 bounded face-aware candidate selection, then implement any stronger claimed obstacle cutting-plane pruning or general overlap optimization with separate ablations. The present overlap is a hard feasibility gate, not a globally optimized objective.
 - Add corridor MVIE volume (or a justified Chebyshev-radius approximation). The current schema provides line-seed containment and local-map coverage, but these must not be presented as region-volume quality.
 - Validate multi-drone interactions if swarm performance is part of the paper claim; current evidence is mainly single-drone corridor integration.
