@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Aggregate TF-SFC schema-v9 logs without conflating retry calls with trials."""
+"""Aggregate TF-SFC schema-v9+ logs without conflating process restarts."""
 
 import argparse
 import csv
@@ -58,12 +58,36 @@ def event_key(row):
                      row.get("replan_id", "")))
 
 
+def as_int(row, key):
+    try:
+        return int(float(row.get(key, "0") or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def sessionize(rows):
+    """Assign a local process-session id whenever replan numbering restarts."""
+    ordered = sorted(rows, key=lambda row: as_float(row, "timestamp_s"))
+    session_id = 0
+    previous_replan = None
+    annotated = []
+    for row in ordered:
+        replan_id = as_int(row, "replan_id")
+        if previous_replan is not None and replan_id <= previous_replan:
+            session_id += 1
+        annotated.append((session_id, row))
+        previous_replan = replan_id
+    return annotated
+
+
 def summarize(tag, rows):
     events = defaultdict(list)
     goals = defaultdict(list)
-    for row in rows:
-        events[event_key(row)].append(row)
-        goals[(row.get("drone_id", ""), row.get("goal_id", ""))].append(row)
+    annotated = sessionize(rows)
+    for session_id, row in annotated:
+        events[(session_id, event_key(row))].append(row)
+        goals[(session_id, row.get("drone_id", ""),
+               row.get("goal_id", ""))].append(row)
 
     successful_calls = sum(as_bool(row, "success") for row in rows)
     successful_events = sum(any(as_bool(row, "success") for row in group)
@@ -102,6 +126,7 @@ def summarize(tag, rows):
     )
 
     print(f"\n[{tag}]")
+    print(f"process sessions: {len({session_id for session_id, _ in annotated})}")
     print(f"optimizer-call success (diagnostic): "
           f"{rate_text(successful_calls, len(rows))}")
     print(f"planning-event success: "
@@ -118,6 +143,31 @@ def summarize(tag, rows):
     retry_rows = sum(int(float(row.get("retry_index", "0") or 0)) > 0
                      for row in rows)
     print(f"retry calls: {retry_rows}/{len(rows)}")
+    if "seed_minco_alignment_valid" in rows[0]:
+        evaluated_alignment = [
+            row for row in rows if as_int(row, "seed_piece_count") > 0
+        ]
+        aligned = sum(as_bool(row, "seed_minco_alignment_valid")
+                      for row in evaluated_alignment)
+        print(f"seed/MINCO slot alignment: "
+              f"{rate_text(aligned, len(evaluated_alignment))}")
+    if "trajectory_repair_attempt_count" in rows[0]:
+        repair_attempts = sum(as_int(row, "trajectory_repair_attempt_count")
+                              for row in rows)
+        repair_accepts = sum(as_int(row, "trajectory_repair_accept_count")
+                             for row in rows)
+        post_attempts = sum(
+            as_int(row, "post_optimization_repair_attempt_count")
+            for row in rows
+        )
+        post_accepts = sum(
+            as_int(row, "post_optimization_repair_accept_count")
+            for row in rows
+        )
+        print(f"trajectory repair acceptance: "
+              f"{rate_text(repair_accepts, repair_attempts)}")
+        print(f"post-optimization repair acceptance: "
+              f"{rate_text(post_accepts, post_attempts)}")
     print(f"successful total planning ms: median="
           f"{statistics.median([v for v in total_ms if math.isfinite(v)]):.3f} "
           f"p95={percentile(total_ms, 0.95):.3f}"
@@ -141,7 +191,7 @@ def main():
     if not rows:
         raise SystemExit("empty run CSV")
     if "planning_event_id" not in rows[0] or "retry_index" not in rows[0]:
-        raise SystemExit("schema-v9 CSV required")
+        raise SystemExit("schema-v9+ CSV required")
 
     groups = defaultdict(list)
     for row in rows:

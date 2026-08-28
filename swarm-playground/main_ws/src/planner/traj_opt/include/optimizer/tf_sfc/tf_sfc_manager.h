@@ -46,8 +46,10 @@ public:
 
   // Rebuild only the worst violating proposed corridor. The actual MINCO
   // samples are tried first; a certified seed segment may be used as a
-  // geometric fallback while retaining MINCO-derived directions. The original
-  // set is retained unless all obstacle/face/overlap/improvement gates pass.
+  // geometric fallback while retaining MINCO-derived directions. A trajectory
+  // candidate must improve the old curve immediately; a certified-seed
+  // candidate instead uses bounded face/width/seed-junction overlap gates and
+  // is judged after hard remapping and the single bounded optimization.
   bool repairWorstCorridorForTrajectory(
       const poly_traj::Trajectory &trajectory,
       const PointVector &seed_path,

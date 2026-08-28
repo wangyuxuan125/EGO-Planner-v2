@@ -111,6 +111,9 @@ struct ExperimentRunRecord
   int restart_count = 0;
   int rebound_count = 0;
   int piece_count = 0;
+  int seed_piece_count = 0;
+  int corridor_slot_count = 0;
+  bool seed_minco_alignment_valid = false;
   int corridor_count = 0;
   int failed_piece_count = 0;
   std::string first_failure_reason = "none";
@@ -157,7 +160,10 @@ struct ExperimentRunRecord
   double trajectory_repair_overlap_previous_m = -1.0;
   double trajectory_repair_overlap_next_m = -1.0;
   bool trajectory_repair_seed_fallback_used = false;
+  bool trajectory_repair_geometric_acceptance_used = false;
+  double trajectory_repair_candidate_weighted_width_m = 0.0;
   std::string trajectory_repair_sample_source = "not_evaluated";
+  std::string trajectory_repair_overlap_anchor_source = "not_evaluated";
   std::string trajectory_repair_primary_failure_reason = "none";
   std::string trajectory_repair_reason = "not_evaluated";
   bool post_optimization_repair_enabled = false;
@@ -168,7 +174,12 @@ struct ExperimentRunRecord
   double post_optimization_repair_ms = 0.0;
   double post_optimization_repair_violation_before_m = 0.0;
   double post_optimization_repair_violation_after_m = 0.0;
+  bool post_optimization_repair_geometric_acceptance_used = false;
+  double post_optimization_repair_candidate_weighted_width_m = 0.0;
+  double post_optimization_repair_junction_reencode_shift_m = 0.0;
   std::string post_optimization_repair_sample_source = "not_evaluated";
+  std::string post_optimization_repair_overlap_anchor_source =
+      "not_evaluated";
   std::string post_optimization_repair_reason = "not_evaluated";
   int corridor_candidate_count = 0;
   int corridor_candidate_accept_count = 0;

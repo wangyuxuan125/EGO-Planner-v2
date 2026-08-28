@@ -892,9 +892,23 @@ bool TfSfcManager::repairWorstCorridorForTrajectory(
     return false;
   }
 
+  result.candidate_weighted_width_m = candidate.metrics.weighted_width;
+  const bool seed_geometry_candidate =
+      result.seed_fallback_used &&
+      parameters_.trajectory_repair_seed_geometric_acceptance_enabled;
+  result.overlap_anchor_source = seed_geometry_candidate
+                                     ? "collision_free_seed_junction"
+                                     : "trajectory_junction";
+
   if (piece_id > 0 && corridors[piece_id - 1].metrics.valid)
   {
-    const Eigen::Vector3d junction = trajectory.getJuncPos(piece_id);
+    // A seed-based candidate intentionally need not contain the colliding
+    // pre-repair MINCO curve. Its common seed junction is nevertheless inside
+    // both neighboring seed corridors and is the correct hard-parameterization
+    // anchor for the next optimization.
+    const Eigen::Vector3d junction =
+        seed_geometry_candidate ? seed_path[piece_id]
+                                : trajectory.getJuncPos(piece_id);
     result.overlap_previous_m =
         overlapRadius(corridors[piece_id - 1], candidate, junction);
     if (result.overlap_previous_m + 1.0e-9 <
@@ -907,7 +921,9 @@ bool TfSfcManager::repairWorstCorridorForTrajectory(
   if (piece_id + 1 < trajectory.getPieceNum() &&
       corridors[piece_id + 1].metrics.valid)
   {
-    const Eigen::Vector3d junction = trajectory.getJuncPos(piece_id + 1);
+    const Eigen::Vector3d junction =
+        seed_geometry_candidate ? seed_path[piece_id + 1]
+                                : trajectory.getJuncPos(piece_id + 1);
     result.overlap_next_m =
         overlapRadius(candidate, corridors[piece_id + 1], junction);
     if (result.overlap_next_m + 1.0e-9 < parameters_.min_overlap_radius)
@@ -935,6 +951,31 @@ bool TfSfcManager::repairWorstCorridorForTrajectory(
   const CorridorEvaluation after = evaluateTrajectory(trajectory);
   result.global_violation_after_m = after.max_violation_m;
   result.piece_violation_after_m = pieceViolation(piece, candidate);
+  if (seed_geometry_candidate)
+  {
+    const bool bounded_geometry =
+        candidate.metrics.valid && candidate.metrics.seed_contained &&
+        candidate.hpoly.rows() >= 6 &&
+        candidate.hpoly.rows() <= parameters_.max_faces &&
+        std::isfinite(candidate.metrics.weighted_width) &&
+        candidate.metrics.weighted_width > 0.0;
+    if (!bounded_geometry)
+    {
+      corridors_ = corridors;
+      result.reason = "seed_geometry_quality_failure";
+      return false;
+    }
+    // Do not require an obstacle-intersecting old curve to improve inside a
+    // corridor built around the collision-free seed. Hard junction mapping,
+    // one bounded optimization and the unchanged final safety gates decide
+    // whether this geometry can become an executable trajectory.
+    result.accepted = true;
+    result.geometric_acceptance_used = true;
+    result.reason = "accepted_seed_geometry";
+    corridors = trial;
+    corridors_ = corridors;
+    return true;
+  }
   const bool piece_improved =
       result.piece_violation_after_m +
               parameters_.trajectory_repair_min_improvement <

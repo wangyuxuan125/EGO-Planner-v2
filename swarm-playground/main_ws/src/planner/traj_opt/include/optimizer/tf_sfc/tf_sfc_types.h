@@ -118,6 +118,10 @@ struct Parameters
   // A* seed segment may be used while retaining the MINCO-derived directions.
   bool trajectory_repair_enabled = true;
   bool trajectory_repair_seed_fallback_enabled = true;
+  // A collision-free seed candidate is allowed to pass the repair gate on
+  // bounded geometry (containment, overlap, width and face count) even though
+  // the pre-repair MINCO curve is expected to violate that new corridor.
+  bool trajectory_repair_seed_geometric_acceptance_enabled = true;
   // One outer repair/re-optimization is allowed only after ordinary strict
   // corridor continuation would otherwise reject a collision-free candidate.
   bool post_optimization_repair_enabled = true;
@@ -168,6 +172,10 @@ struct Parameters
   double seed_clearance_astar_time_limit = 0.20;
   double trajectory_repair_trigger = 1.0e-3;
   double trajectory_repair_min_improvement = 1.0e-4;
+  // Only seed-based post-optimization repair may move a junction before the
+  // single bounded re-optimization. The shifted point remains inside the
+  // adjacent-corridor intersection and all ordinary final safety gates remain.
+  double post_optimization_repair_max_seed_junction_shift = 0.25;
 };
 
 struct DirectionSet
@@ -238,9 +246,13 @@ struct TrajectoryRepairResult
   double overlap_previous_m = -1.0;
   double overlap_next_m = -1.0;
   bool seed_fallback_used = false;
+  bool geometric_acceptance_used = false;
   std::string sample_source = "trajectory_samples";
+  std::string overlap_anchor_source = "trajectory_junction";
   std::string primary_failure_reason = "none";
   std::string reason = "not_evaluated";
+  double candidate_weighted_width_m = 0.0;
+  double junction_reencode_shift_m = 0.0;
 };
 
 // Each row of hpoly stores [n_x, n_y, n_z, b] for n.dot(x) <= b.

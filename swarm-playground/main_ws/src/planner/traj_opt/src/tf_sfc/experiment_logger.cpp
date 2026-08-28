@@ -55,7 +55,8 @@ const char *kRunHeader =
     "lbfgs_result,total_planning_ms,"
     "optimizer_ms,corridor_generation_ms,seed_path_build_ms,"
     "corridor_inflation_ms,lbfgs_iterations,restart_count,"
-    "rebound_count,piece_count,corridor_count,failed_piece_count,first_failure_reason,"
+    "rebound_count,piece_count,seed_piece_count,corridor_slot_count,"
+    "seed_minco_alignment_valid,corridor_count,failed_piece_count,first_failure_reason,"
     "total_faces,mean_faces,"
     "mean_weighted_width,min_sample_slack,min_overlap_radius,"
     "seed_containment_evaluated_count,seed_contained_corridor_count,"
@@ -85,7 +86,11 @@ const char *kRunHeader =
     "trajectory_repair_piece_violation_before_m,"
     "trajectory_repair_piece_violation_after_m,"
     "trajectory_repair_overlap_previous_m,trajectory_repair_overlap_next_m,"
-    "trajectory_repair_seed_fallback_used,trajectory_repair_sample_source,"
+    "trajectory_repair_seed_fallback_used,"
+    "trajectory_repair_geometric_acceptance_used,"
+    "trajectory_repair_candidate_weighted_width_m,"
+    "trajectory_repair_sample_source,"
+    "trajectory_repair_overlap_anchor_source,"
     "trajectory_repair_primary_failure_reason,trajectory_repair_reason,"
     "post_optimization_repair_enabled,"
     "post_optimization_repair_attempt_count,"
@@ -95,7 +100,11 @@ const char *kRunHeader =
     "post_optimization_repair_ms,"
     "post_optimization_repair_violation_before_m,"
     "post_optimization_repair_violation_after_m,"
+    "post_optimization_repair_geometric_acceptance_used,"
+    "post_optimization_repair_candidate_weighted_width_m,"
+    "post_optimization_repair_junction_reencode_shift_m,"
     "post_optimization_repair_sample_source,"
+    "post_optimization_repair_overlap_anchor_source,"
     "post_optimization_repair_reason,corridor_candidate_count,"
     "corridor_candidate_accept_count,corridor_rollback_applied,"
     "corridor_rollback_reason,best_corridor_violation_m,"
@@ -192,7 +201,7 @@ bool ExperimentLogger::ensureDirectory() const
 
 bool ExperimentLogger::appendRun(const ExperimentRunRecord &record) const
 {
-  const std::string path = directory_ + "/ego_runs_v21_drone_" +
+  const std::string path = directory_ + "/ego_runs_v22_drone_" +
                            std::to_string(record.drone_id) + ".csv";
   const bool header = fileNeedsHeader(path);
   std::ofstream output(path, std::ios::out | std::ios::app);
@@ -205,7 +214,7 @@ bool ExperimentLogger::appendRun(const ExperimentRunRecord &record) const
     output << kRunHeader << '\n';
   }
   output << std::setprecision(17)
-         << 21 << ',' << csv(record.run_id) << ','
+         << 22 << ',' << csv(record.run_id) << ','
          << csv(record.planning_event_id) << ',' << record.timestamp_s << ','
          << csv(record.experiment_tag) << ',' << record.drone_id << ','
          << record.goal_id << ',' << record.replan_id << ','
@@ -286,6 +295,8 @@ bool ExperimentLogger::appendRun(const ExperimentRunRecord &record) const
          << record.corridor_inflation_ms << ','
          << record.lbfgs_iterations << ',' << record.restart_count << ','
          << record.rebound_count << ',' << record.piece_count << ','
+         << record.seed_piece_count << ',' << record.corridor_slot_count << ','
+         << record.seed_minco_alignment_valid << ','
          << record.corridor_count << ',' << record.failed_piece_count << ','
          << csv(record.first_failure_reason) << ',' << record.total_faces << ','
          << record.mean_faces << ',' << record.mean_weighted_width << ','
@@ -328,7 +339,10 @@ bool ExperimentLogger::appendRun(const ExperimentRunRecord &record) const
          << record.trajectory_repair_overlap_previous_m << ','
          << record.trajectory_repair_overlap_next_m << ','
          << record.trajectory_repair_seed_fallback_used << ','
+         << record.trajectory_repair_geometric_acceptance_used << ','
+         << record.trajectory_repair_candidate_weighted_width_m << ','
          << csv(record.trajectory_repair_sample_source) << ','
+         << csv(record.trajectory_repair_overlap_anchor_source) << ','
          << csv(record.trajectory_repair_primary_failure_reason) << ','
          << csv(record.trajectory_repair_reason) << ','
          << record.post_optimization_repair_enabled << ','
@@ -339,7 +353,11 @@ bool ExperimentLogger::appendRun(const ExperimentRunRecord &record) const
          << record.post_optimization_repair_ms << ','
          << record.post_optimization_repair_violation_before_m << ','
          << record.post_optimization_repair_violation_after_m << ','
+         << record.post_optimization_repair_geometric_acceptance_used << ','
+         << record.post_optimization_repair_candidate_weighted_width_m << ','
+         << record.post_optimization_repair_junction_reencode_shift_m << ','
          << csv(record.post_optimization_repair_sample_source) << ','
+         << csv(record.post_optimization_repair_overlap_anchor_source) << ','
          << csv(record.post_optimization_repair_reason) << ','
          << record.corridor_candidate_count << ','
          << record.corridor_candidate_accept_count << ','
@@ -359,7 +377,7 @@ bool ExperimentLogger::appendCorridors(const ExperimentRunRecord &record,
   {
     return true;
   }
-  const std::string path = directory_ + "/ego_corridors_v21_drone_" +
+  const std::string path = directory_ + "/ego_corridors_v22_drone_" +
                            std::to_string(record.drone_id) + ".csv";
   const bool header = fileNeedsHeader(path);
   std::ofstream output(path, std::ios::out | std::ios::app);
@@ -375,7 +393,7 @@ bool ExperimentLogger::appendCorridors(const ExperimentRunRecord &record,
   for (const Corridor &corridor : corridors)
   {
     const CorridorMetrics &metrics = corridor.metrics;
-    output << 21 << ',' << csv(record.run_id) << ',' << record.timestamp_s << ','
+    output << 22 << ',' << csv(record.run_id) << ',' << record.timestamp_s << ','
            << csv(record.experiment_tag) << ',' << record.drone_id << ','
            << metrics.piece_id << ',' << csv(record.requested_method) << ','
            << csv(record.method) << ',' << metrics.face_count << ','

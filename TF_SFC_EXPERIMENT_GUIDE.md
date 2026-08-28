@@ -573,3 +573,65 @@ primary trajectory-inflation failure, seed fallback use, and separate outer
 repair attempts/accepts, timing, violations, face count and reason. The v21
 gate is fewer trajectory-inflation failures and strict rejections without a
 face/overlap regression or material P90 planning-time increase.
+
+## EGO schema-v22: aligned seed geometry and repairable hard junctions
+
+The first v21 regression contains three complete fixed-seed missions (50, 71
+and 98 replanning calls). All three reached the goal region, but the new gates
+did not improve robustness: 86 certified-seed fallbacks were all rejected as
+`piece_not_improved`, and 85 post-optimization repairs produced zero accepted
+outer passes. The main rejection reasons were neighbor overlap evaluated at
+the already violating MINCO junction and an inexact hard re-encoding of a
+point that was otherwise inside the repaired intersection.
+
+Schema v22 changes only the proposed TF-SFC repair path:
+
+1. a trajectory-sample candidate keeps the v20 immediate-improvement and
+   global-nonworsening gates;
+2. when that candidate cannot be inflated, a certified-seed candidate is
+   judged by seed containment, positive trajectory-weighted width, the
+   12-face bound and both adjacent overlaps at the aligned seed junctions;
+3. the A* polyline is still simplified and subdivided to at most one seed
+   segment per covered MINCO piece before corridor construction—there is no
+   independent fixed eight-corridor discretization;
+4. `tf_sfc/samples_per_piece:=8` means eight sampling intervals (nine sample
+   points) inside each MINCO piece; it is not a corridor count;
+5. the hard vertex hull retains a feasible preferred junction generator, so
+   an interior point is not lost when the vertex budget is pruned;
+6. a seed-based outer repair may project affected junctions by at most 0.25 m
+   inside the repaired adjacent-corridor intersections before the single
+   L-BFGS pass. A trajectory-sample outer repair retains the 1e-5 m bound.
+
+First v22 regression:
+
+```bash
+roslaunch ego_planner single_drone_interactive.launch \
+  map_seed:=42 \
+  tf_sfc_enabled:=true \
+  tf_sfc_corridor_method:=tf_sfc \
+  tf_sfc_direction_mode:=1 \
+  tf_sfc_allow_partial_corridors:=true \
+  tf_sfc_allow_ego_fallback:=false \
+  tf_sfc_hard_corridor_parameterization:=true \
+  tf_sfc_trajectory_repair_enabled:=true \
+  tf_sfc_trajectory_repair_seed_fallback_enabled:=true \
+  tf_sfc_trajectory_repair_seed_geometric_acceptance_enabled:=true \
+  tf_sfc_trajectory_repair_max_passes:=1 \
+  tf_sfc_post_optimization_repair_enabled:=true \
+  tf_sfc_post_optimization_repair_max_passes:=1 \
+  tf_sfc_post_optimization_repair_max_seed_junction_shift:=0.25 \
+  tf_sfc_experiment_tag:=pca_tf_sfc_v22_aligned_repair
+```
+
+The v22 run schema adds `seed_piece_count`, `corridor_slot_count` and
+`seed_minco_alignment_valid`, plus geometric-acceptance, overlap-anchor,
+candidate-width and junction-shift evidence for both repair stages. A valid
+generated set must have `corridor_slot_count == piece_count`, while
+`seed_piece_count <= piece_count`; `corridor_count` continues to count only
+valid slots and may be smaller under partial-prefix operation.
+
+Primary gates are: at least one accepted certified-seed repair, at least one
+accepted outer repair or a clear downstream safety rejection, no face above
+12, no accepted overlap below 0.02 m, zero final violation on successful calls,
+and no material P90 latency regression. Keep the v21 files unchanged for the
+paired ablation.
