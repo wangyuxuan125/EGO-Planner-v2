@@ -156,21 +156,13 @@ bool HardCorridorParameterization::enumerateVertices(
 bool HardCorridorParameterization::configure(const CorridorVector &corridors,
                                              const int piece_count,
                                              const int max_vertices,
-                                             const double vertex_tolerance,
-                                             const Eigen::MatrixXd *preferred_junctions)
+                                             const double vertex_tolerance)
 {
   clear();
   vertex_tolerance_ = std::max(1.0e-10, vertex_tolerance);
   if (piece_count <= 1)
   {
     return piece_count == 1;
-  }
-  if (preferred_junctions &&
-      (preferred_junctions->rows() != 3 ||
-       preferred_junctions->cols() != piece_count - 1 ||
-       !preferred_junctions->allFinite()))
-  {
-    return false;
   }
   junctions_.resize(piece_count - 1);
   for (int junction_id = 0; junction_id < piece_count - 1; ++junction_id)
@@ -205,69 +197,12 @@ bool HardCorridorParameterization::configure(const CorridorVector &corridors,
         row += piece.rows();
       }
     }
-    const int enumeration_budget =
-        preferred_junctions && max_vertices > 4 ? max_vertices - 1
-                                                : max_vertices;
     if (!normalizedHPoly(combined, vertex_tolerance_, junction.hpoly) ||
-        !enumerateVertices(junction.hpoly, enumeration_budget,
-                           vertex_tolerance_,
+        !enumerateVertices(junction.hpoly, max_vertices, vertex_tolerance_,
                            junction.vertices))
     {
       clear();
       return false;
-    }
-    if (preferred_junctions)
-    {
-      const Eigen::Vector3d preferred =
-          preferred_junctions->col(junction_id);
-      bool inside = true;
-      for (int face = 0; face < junction.hpoly.rows(); ++face)
-      {
-        if (junction.hpoly.row(face).head<3>().dot(preferred) >
-            junction.hpoly(face, 3) + 10.0 * vertex_tolerance_)
-        {
-          inside = false;
-          break;
-        }
-      }
-      if (inside)
-      {
-        int nearest_id = 0;
-        double nearest_squared =
-            (junction.vertices.col(0) - preferred).squaredNorm();
-        for (int vertex_id = 1; vertex_id < junction.vertices.cols();
-             ++vertex_id)
-        {
-          const double squared =
-              (junction.vertices.col(vertex_id) - preferred).squaredNorm();
-          if (squared < nearest_squared)
-          {
-            nearest_squared = squared;
-            nearest_id = vertex_id;
-          }
-        }
-        const double exact_tolerance =
-            std::max(1.0e-12, vertex_tolerance_ * vertex_tolerance_);
-        if (nearest_squared <= exact_tolerance)
-        {
-          junction.vertices.col(nearest_id) = preferred;
-        }
-        else if (max_vertices < 4 ||
-                 junction.vertices.cols() < max_vertices)
-        {
-          const int old_count = junction.vertices.cols();
-          junction.vertices.conservativeResize(Eigen::NoChange,
-                                               old_count + 1);
-          junction.vertices.col(old_count) = preferred;
-        }
-        else
-        {
-          // The preferred point is itself inside the intersection. Replacing
-          // the nearest generator keeps the convex-hull parameterization safe
-          // while honoring the configured variable budget.
-          junction.vertices.col(nearest_id) = preferred;
-        }
-      }
     }
     junction.constrained = true;
     junction.variable_count = junction.vertices.cols();
@@ -302,25 +237,15 @@ Eigen::VectorXd HardCorridorParameterization::inverseWeights(
     const Eigen::MatrixXd &vertices,
     const Eigen::Vector3d &point)
 {
-  for (int vertex_id = 0; vertex_id < vertices.cols(); ++vertex_id)
-  {
-    if ((vertices.col(vertex_id) - point).squaredNorm() <= 1.0e-20)
-    {
-      Eigen::VectorXd exact = Eigen::VectorXd::Zero(vertices.cols());
-      exact(vertex_id) = 1.0;
-      return exact;
-    }
-  }
   Eigen::VectorXd weights = Eigen::VectorXd::Constant(
       vertices.cols(), 1.0 / static_cast<double>(vertices.cols()));
   const Eigen::MatrixXd offsets = vertices.colwise() - point;
   const double step = 1.0 / std::max(1.0e-9, offsets.squaredNorm());
-  for (int iteration = 0; iteration < 1024; ++iteration)
+  for (int iteration = 0; iteration < 160; ++iteration)
   {
     const Eigen::VectorXd next = projectSimplex(
         weights - step * offsets.transpose() * (offsets * weights));
-    if ((next - weights).squaredNorm() <= 1.0e-24 ||
-        (offsets * next).squaredNorm() <= 1.0e-20)
+    if ((next - weights).squaredNorm() <= 1.0e-20)
     {
       weights = next;
       break;
