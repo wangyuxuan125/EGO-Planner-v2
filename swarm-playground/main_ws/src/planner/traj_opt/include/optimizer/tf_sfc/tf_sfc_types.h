@@ -118,13 +118,13 @@ struct Parameters
   // A* seed segment may be used while retaining the MINCO-derived directions.
   bool trajectory_repair_enabled = true;
   bool trajectory_repair_seed_fallback_enabled = true;
-  // A collision-free seed candidate is allowed to pass the repair gate on
-  // bounded geometry (containment, overlap, width and face count) even though
-  // the pre-repair MINCO curve is expected to violate that new corridor.
-  bool trajectory_repair_seed_geometric_acceptance_enabled = true;
+  // Experimental v22 gate. Disabled by default because accepting a seed
+  // corridor without trajectory improvement caused over-acceptance and
+  // degraded closed-loop progress in the first v22 run.
+  bool trajectory_repair_seed_geometric_acceptance_enabled = false;
   // One outer repair/re-optimization is allowed only after ordinary strict
   // corridor continuation would otherwise reject a collision-free candidate.
-  bool post_optimization_repair_enabled = true;
+  bool post_optimization_repair_enabled = false;
   bool visualization_enabled = true;
   bool log_enabled = true;
   std::string visualization_frame = "world";
@@ -172,10 +172,9 @@ struct Parameters
   double seed_clearance_astar_time_limit = 0.20;
   double trajectory_repair_trigger = 1.0e-3;
   double trajectory_repair_min_improvement = 1.0e-4;
-  // Only seed-based post-optimization repair may move a junction before the
-  // single bounded re-optimization. The shifted point remains inside the
-  // adjacent-corridor intersection and all ordinary final safety gates remain.
-  double post_optimization_repair_max_seed_junction_shift = 0.25;
+  // Retained for launch-file compatibility with v22. v23 restores strict
+  // re-encoding and never projects a post-optimization junction by this amount.
+  double post_optimization_repair_max_seed_junction_shift = 1.0e-5;
 };
 
 struct DirectionSet
