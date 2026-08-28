@@ -1468,6 +1468,14 @@ namespace ego_planner
     const std::string requested_corridor_method = tf_sfc_parameters_.enabled
                                                       ? tf_sfc_parameters_.corridor_method
                                                       : "ego";
+    const bool trajectory_repair_enabled =
+        tf_sfc_parameters_.enabled &&
+        requested_corridor_method == "tf_sfc" &&
+        tf_sfc_parameters_.trajectory_repair_enabled;
+    int trajectory_repair_attempt_count = 0;
+    int trajectory_repair_accept_count = 0;
+    double trajectory_repair_ms = 0.0;
+    tf_sfc::TrajectoryRepairResult trajectory_repair_result;
     double optimizer_time_ms = 0.0;
     double tf_sfc_generation_ms = 0.0;
     double tf_sfc_inflation_ms = 0.0;
@@ -1589,6 +1597,29 @@ namespace ego_planner
                   (std::max(tf_sfc_parameters_.samples_per_piece, 2) + 1);
             }
           }
+          record.trajectory_repair_enabled = trajectory_repair_enabled;
+          record.trajectory_repair_attempt_count =
+              trajectory_repair_attempt_count;
+          record.trajectory_repair_accept_count =
+              trajectory_repair_accept_count;
+          record.trajectory_repair_piece_id =
+              trajectory_repair_result.piece_id;
+          record.trajectory_repair_candidate_face_count =
+              trajectory_repair_result.candidate_face_count;
+          record.trajectory_repair_ms = trajectory_repair_ms;
+          record.trajectory_repair_global_violation_before_m =
+              trajectory_repair_result.global_violation_before_m;
+          record.trajectory_repair_global_violation_after_m =
+              trajectory_repair_result.global_violation_after_m;
+          record.trajectory_repair_piece_violation_before_m =
+              trajectory_repair_result.piece_violation_before_m;
+          record.trajectory_repair_piece_violation_after_m =
+              trajectory_repair_result.piece_violation_after_m;
+          record.trajectory_repair_overlap_previous_m =
+              trajectory_repair_result.overlap_previous_m;
+          record.trajectory_repair_overlap_next_m =
+              trajectory_repair_result.overlap_next_m;
+          record.trajectory_repair_reason = trajectory_repair_result.reason;
         };
 
     // Preparision 2: Trajectory related params
@@ -1964,6 +1995,55 @@ namespace ego_planner
       // Keep a valid trajectory object for diagnostics even when corridor
       // generation is rejected before the optimizer starts.
       jerkOpt_.generate(guidedInnerPts, initT);
+      if (corridor_ok && trajectory_repair_enabled)
+      {
+        const int max_repair_passes =
+            std::max(tf_sfc_parameters_.trajectory_repair_max_passes, 0);
+        for (int pass = 0; pass < max_repair_passes; ++pass)
+        {
+          tf_sfc::TrajectoryRepairResult pass_result;
+          const bool accepted =
+              tf_sfc_manager_->repairWorstCorridorForTrajectory(
+                  jerkOpt_.getTraj(), tf_corridors_, pass_result);
+          trajectory_repair_result = pass_result;
+          trajectory_repair_ms += pass_result.generation_time_ms;
+          tf_sfc_inflation_ms += pass_result.generation_time_ms;
+          if (pass_result.attempted)
+          {
+            ++trajectory_repair_attempt_count;
+          }
+          if (accepted)
+          {
+            ++trajectory_repair_accept_count;
+            ROS_INFO(
+                "TF-SFC trajectory repair accepted for piece %d: "
+                "global %.6f -> %.6f m, piece %.6f -> %.6f m, faces=%d.",
+                pass_result.piece_id,
+                pass_result.global_violation_before_m,
+                pass_result.global_violation_after_m,
+                pass_result.piece_violation_before_m,
+                pass_result.piece_violation_after_m,
+                pass_result.candidate_face_count);
+          }
+          else if (pass_result.attempted)
+          {
+            ROS_WARN(
+                "TF-SFC trajectory repair rejected for piece %d (%s): "
+                "global %.6f -> %.6f m, piece %.6f -> %.6f m.",
+                pass_result.piece_id, pass_result.reason.c_str(),
+                pass_result.global_violation_before_m,
+                pass_result.global_violation_after_m,
+                pass_result.piece_violation_before_m,
+                pass_result.piece_violation_after_m);
+          }
+          if (!accepted ||
+              pass_result.global_violation_after_m <=
+                  tf_sfc_parameters_.trajectory_repair_trigger)
+          {
+            break;
+          }
+        }
+      }
       if (corridor_ok)
       {
         if (tf_sfc_parameters_.use_projection)
@@ -4520,11 +4600,37 @@ namespace ego_planner
              tf_sfc_parameters_.seed_clearance_astar_enabled, true);
     nh.param("tf_sfc/seed_clearance_astar_time_limit",
              tf_sfc_parameters_.seed_clearance_astar_time_limit, 0.20);
+    nh.param("tf_sfc/trajectory_repair_enabled",
+             tf_sfc_parameters_.trajectory_repair_enabled, true);
+    nh.param("tf_sfc/trajectory_repair_max_passes",
+             tf_sfc_parameters_.trajectory_repair_max_passes, 1);
+    nh.param("tf_sfc/trajectory_repair_trigger",
+             tf_sfc_parameters_.trajectory_repair_trigger, 1.0e-3);
+    nh.param("tf_sfc/trajectory_repair_min_improvement",
+             tf_sfc_parameters_.trajectory_repair_min_improvement, 1.0e-4);
     if (tf_sfc_parameters_.seed_clearance_astar_time_limit <= 0.0)
     {
       ROS_WARN("tf_sfc/seed_clearance_astar_time_limit must be positive; "
                "using 0.20 s.");
       tf_sfc_parameters_.seed_clearance_astar_time_limit = 0.20;
+    }
+    if (tf_sfc_parameters_.trajectory_repair_max_passes < 0)
+    {
+      ROS_WARN("tf_sfc/trajectory_repair_max_passes must be non-negative; "
+               "using 0.");
+      tf_sfc_parameters_.trajectory_repair_max_passes = 0;
+    }
+    if (tf_sfc_parameters_.trajectory_repair_trigger < 0.0)
+    {
+      ROS_WARN("tf_sfc/trajectory_repair_trigger must be non-negative; "
+               "using 0.001 m.");
+      tf_sfc_parameters_.trajectory_repair_trigger = 1.0e-3;
+    }
+    if (tf_sfc_parameters_.trajectory_repair_min_improvement < 0.0)
+    {
+      ROS_WARN("tf_sfc/trajectory_repair_min_improvement must be "
+               "non-negative; using 0.0001 m.");
+      tf_sfc_parameters_.trajectory_repair_min_improvement = 1.0e-4;
     }
 
     int direction_mode = static_cast<int>(tf_sfc::DirectionMode::PCA);

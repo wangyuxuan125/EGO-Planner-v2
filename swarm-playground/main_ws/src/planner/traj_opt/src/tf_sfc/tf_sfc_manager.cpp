@@ -739,6 +739,192 @@ CorridorEvaluation TfSfcManager::evaluateTrajectory(
   return evaluation;
 }
 
+double TfSfcManager::pieceViolation(const poly_traj::Piece &piece,
+                                    const Corridor &corridor) const
+{
+  if (!corridor.metrics.valid || corridor.hpoly.rows() <= 0)
+  {
+    return 0.0;
+  }
+  double max_violation = 0.0;
+  const PointVector samples = samplePiece(piece);
+  for (const Eigen::Vector3d &point : samples)
+  {
+    max_violation = std::max(
+        max_violation,
+        maxNormalizedHalfspaceViolation(corridor.hpoly, point));
+  }
+  return max_violation;
+}
+
+bool TfSfcManager::repairWorstCorridorForTrajectory(
+    const poly_traj::Trajectory &trajectory,
+    CorridorVector &corridors,
+    TrajectoryRepairResult &result)
+{
+  result = TrajectoryRepairResult();
+  result.evaluated = true;
+  if (!parameters_.trajectory_repair_enabled)
+  {
+    result.reason = "disabled";
+    return false;
+  }
+  if (parameters_.corridor_method != "tf_sfc")
+  {
+    result.reason = "method_not_tf_sfc";
+    return false;
+  }
+  if (!grid_map_ || trajectory.getPieceNum() <= 0 ||
+      static_cast<int>(corridors.size()) != trajectory.getPieceNum())
+  {
+    result.reason = "invalid_input";
+    return false;
+  }
+
+  corridors_ = corridors;
+  const CorridorEvaluation before = evaluateTrajectory(trajectory);
+  result.global_violation_before_m = before.max_violation_m;
+  result.global_violation_after_m = before.max_violation_m;
+  result.piece_id = before.max_violation_piece_id;
+  if (before.max_violation_m <= parameters_.trajectory_repair_trigger)
+  {
+    result.reason = "below_trigger";
+    return false;
+  }
+  if (result.piece_id < 0 || result.piece_id >= trajectory.getPieceNum() ||
+      !corridors[result.piece_id].metrics.valid)
+  {
+    result.reason = "invalid_worst_piece";
+    return false;
+  }
+
+  const int piece_id = result.piece_id;
+  const poly_traj::Piece &piece = trajectory[piece_id];
+  result.piece_violation_before_m =
+      pieceViolation(piece, corridors[piece_id]);
+  result.piece_violation_after_m = result.piece_violation_before_m;
+  result.attempted = true;
+
+  const auto started = std::chrono::steady_clock::now();
+  const PointVector samples = samplePiece(piece);
+  DirectionSet directions;
+  directions.requested_mode = parameters_.direction_mode;
+  Corridor candidate;
+  candidate.metrics.piece_id = piece_id;
+  candidate.metrics.requested_direction_mode =
+      static_cast<int>(parameters_.direction_mode);
+  if (!computeDirections(piece, samples, piece_id, directions))
+  {
+    result.reason = "direction_failure";
+    result.generation_time_ms = std::chrono::duration<double, std::milli>(
+                                    std::chrono::steady_clock::now() - started)
+                                    .count();
+    return false;
+  }
+  candidate.metrics.used_direction_mode =
+      static_cast<int>(directions.used_mode);
+
+  FailureReason failure_reason = FailureReason::NONE;
+  const bool inflated = inflator_.inflate(
+      samples, directions, grid_map_->getResolution(),
+      [this](const Eigen::Vector3d &point) {
+        if (!grid_map_->isInInflatedMap(point))
+        {
+          return DirectionalInflator::SpaceState::OUTSIDE_MAP;
+        }
+        return grid_map_->getInflateOccupancy(point) != 0
+                   ? DirectionalInflator::SpaceState::OCCUPIED
+                   : DirectionalInflator::SpaceState::FREE;
+      },
+      candidate, failure_reason);
+  result.generation_time_ms = std::chrono::duration<double, std::milli>(
+                                  std::chrono::steady_clock::now() - started)
+                                  .count();
+  candidate.metrics.generation_time_ms = result.generation_time_ms;
+  result.candidate_face_count = candidate.metrics.face_count;
+  if (!inflated)
+  {
+    result.reason = std::string("inflation_") +
+                    failureReasonName(failure_reason);
+    return false;
+  }
+  if (candidate.hpoly.rows() > parameters_.max_faces)
+  {
+    result.reason = "face_budget_exceeded";
+    return false;
+  }
+
+  if (piece_id > 0 && corridors[piece_id - 1].metrics.valid)
+  {
+    const Eigen::Vector3d junction = trajectory.getJuncPos(piece_id);
+    result.overlap_previous_m =
+        overlapRadius(corridors[piece_id - 1], candidate, junction);
+    if (result.overlap_previous_m + 1.0e-9 <
+        parameters_.min_overlap_radius)
+    {
+      result.reason = "overlap_previous_too_small";
+      return false;
+    }
+  }
+  if (piece_id + 1 < trajectory.getPieceNum() &&
+      corridors[piece_id + 1].metrics.valid)
+  {
+    const Eigen::Vector3d junction = trajectory.getJuncPos(piece_id + 1);
+    result.overlap_next_m =
+        overlapRadius(candidate, corridors[piece_id + 1], junction);
+    if (result.overlap_next_m + 1.0e-9 < parameters_.min_overlap_radius)
+    {
+      result.reason = "overlap_next_too_small";
+      return false;
+    }
+  }
+
+  CorridorVector trial = corridors;
+  trial[piece_id] = candidate;
+  if (piece_id > 0 && trial[piece_id - 1].metrics.valid)
+  {
+    trial[piece_id - 1].metrics.overlap_radius_to_next =
+        result.overlap_previous_m;
+  }
+  if (piece_id + 1 < trajectory.getPieceNum() &&
+      trial[piece_id + 1].metrics.valid)
+  {
+    trial[piece_id].metrics.overlap_radius_to_next =
+        result.overlap_next_m;
+  }
+
+  corridors_ = trial;
+  const CorridorEvaluation after = evaluateTrajectory(trajectory);
+  result.global_violation_after_m = after.max_violation_m;
+  result.piece_violation_after_m = pieceViolation(piece, candidate);
+  const bool piece_improved =
+      result.piece_violation_after_m +
+              parameters_.trajectory_repair_min_improvement <
+          result.piece_violation_before_m ||
+      result.piece_violation_after_m <= parameters_.max_final_violation;
+  const bool globally_nonworsening =
+      result.global_violation_after_m <=
+      result.global_violation_before_m + 1.0e-9;
+  if (!piece_improved)
+  {
+    corridors_ = corridors;
+    result.reason = "piece_not_improved";
+    return false;
+  }
+  if (!globally_nonworsening)
+  {
+    corridors_ = corridors;
+    result.reason = "global_violation_worsened";
+    return false;
+  }
+
+  result.accepted = true;
+  result.reason = "accepted";
+  corridors = trial;
+  corridors_ = corridors;
+  return true;
+}
+
 void TfSfcManager::setPieceSensitivityGramians(
     const std::vector<Eigen::Matrix3d, Eigen::aligned_allocator<Eigen::Matrix3d>> &gramians)
 {

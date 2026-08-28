@@ -44,6 +44,14 @@ public:
   CorridorEvaluation evaluateTrajectory(
       const poly_traj::Trajectory &trajectory) const;
 
+  // Rebuild only the worst violating proposed corridor around the actual
+  // initial MINCO samples.  The original set is retained unless the candidate
+  // passes obstacle/face/overlap gates and monotonically improves feasibility.
+  bool repairWorstCorridorForTrajectory(
+      const poly_traj::Trajectory &trajectory,
+      CorridorVector &corridors,
+      TrajectoryRepairResult &result);
+
   void setCorridorPenaltyScale(double scale);
 
   void setPieceSensitivityGramians(
@@ -63,6 +71,8 @@ private:
                             const Eigen::Vector3d &finish) const;
   double overlapRadius(const Corridor &lhs, const Corridor &rhs,
                        const Eigen::Vector3d &shared_point) const;
+  double pieceViolation(const poly_traj::Piece &piece,
+                        const Corridor &corridor) const;
 
   GridMap::Ptr grid_map_;
   Parameters parameters_;

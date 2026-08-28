@@ -485,3 +485,45 @@ The first v19 regression should repeat the same map seed 42 and goal
 optimizer-call success, longest failure streak, final violating face-sample
 count, and planning-time percentiles against v18. Do not treat replanning
 calls as independent trials.
+
+## EGO schema-v20: bounded trajectory-feasibility repair
+
+The v19 fixed-seed regression localized most strict TF-SFC failures to one
+piece and one interior sample (commonly piece 1 at normalized time 0.75).
+Schema v20 therefore adds one proposed-method-only pre-optimization repair:
+
+1. evaluate the initial MINCO trajectory on the same v19 sample grid;
+2. select only the worst violating piece;
+3. rebuild that corridor around the piece's actual MINCO curve samples;
+4. accept the candidate only when obstacle separation, the existing face
+   budget, both adjacent overlap tests, piece-wise improvement, and global
+   non-worsening all pass;
+5. configure the hard corridor parameterization from the accepted frozen set.
+
+The default pass budget is one. The repair does not change A*, Liu/
+EllipsoidDecomp, original EGO, the 12-face budget, or the final 1 mm gate.
+Disable `tf_sfc_trajectory_repair_enabled` for the v19-equivalent ablation.
+
+First v20 TF-SFC regression:
+
+```bash
+roslaunch ego_planner single_drone_interactive.launch \
+  map_seed:=42 \
+  tf_sfc_enabled:=true \
+  tf_sfc_corridor_method:=tf_sfc \
+  tf_sfc_direction_mode:=1 \
+  tf_sfc_allow_partial_corridors:=true \
+  tf_sfc_allow_ego_fallback:=false \
+  tf_sfc_hard_corridor_parameterization:=true \
+  tf_sfc_trajectory_repair_enabled:=true \
+  tf_sfc_trajectory_repair_max_passes:=1 \
+  tf_sfc_trajectory_repair_trigger:=0.001 \
+  tf_sfc_trajectory_repair_min_improvement:=0.0001 \
+  tf_sfc_experiment_tag:=pca_tf_sfc_v20_trajectory_repair
+```
+
+Schema-v20 run logs add repair enable/attempt/accept counts, repaired piece,
+candidate face count, repair time, global and piece violations before/after,
+both neighbor overlap radii, and the rejection/acceptance reason. The primary
+gate is a reduction of strict corridor rejections and the initial 13--15 call
+failure streak without increasing faces or P90 planning time materially.

@@ -113,6 +113,12 @@ struct Parameters
   // post-search detour.
   bool seed_retry_without_velocity_on_clearance_failure = true;
   bool seed_clearance_astar_enabled = true;
+  // Proposed-method-only bounded pre-optimization repair.  A candidate is
+  // rebuilt around the actual initial MINCO samples of the worst violating
+  // piece, then accepted only when it remains face-bounded, obstacle-free,
+  // overlap-valid, and monotonically improves that piece without worsening
+  // the global sampled violation.
+  bool trajectory_repair_enabled = true;
   bool visualization_enabled = true;
   bool log_enabled = true;
   std::string visualization_frame = "world";
@@ -128,6 +134,7 @@ struct Parameters
   int projection_passes = 4;
   int min_valid_pieces = 1;
   int max_enforcement_passes = 2;
+  int trajectory_repair_max_passes = 1;
   int hard_max_vertices = 64;
   double safety_margin = 0.25;
   // Required slack for non-junction trajectory samples against obstacle cuts.
@@ -156,6 +163,8 @@ struct Parameters
   double decomp_initial_velocity_threshold = 0.20;
   double decomp_degenerate_seed_length = 0.10;
   double seed_clearance_astar_time_limit = 0.20;
+  double trajectory_repair_trigger = 1.0e-3;
+  double trajectory_repair_min_improvement = 1.0e-4;
 };
 
 struct DirectionSet
@@ -209,6 +218,23 @@ struct CorridorEvaluation
   double max_violation_time_ratio = 0.0;
   double penalty_cost = 0.0;
   double max_violation_m = 0.0;
+};
+
+struct TrajectoryRepairResult
+{
+  bool evaluated = false;
+  bool attempted = false;
+  bool accepted = false;
+  int piece_id = -1;
+  int candidate_face_count = 0;
+  double generation_time_ms = 0.0;
+  double global_violation_before_m = 0.0;
+  double global_violation_after_m = 0.0;
+  double piece_violation_before_m = 0.0;
+  double piece_violation_after_m = 0.0;
+  double overlap_previous_m = -1.0;
+  double overlap_next_m = -1.0;
+  std::string reason = "not_evaluated";
 };
 
 // Each row of hpoly stores [n_x, n_y, n_z, b] for n.dot(x) <= b.

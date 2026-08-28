@@ -76,7 +76,16 @@ const char *kRunHeader =
     "final_corridor_enforcement_enabled,max_final_violation_allowed_m,"
     "corridor_enforcement_passes,corridor_penalty_weight_initial,"
     "corridor_penalty_weight_final,"
-    "strict_corridor_rejected,corridor_candidate_count,"
+    "strict_corridor_rejected,trajectory_repair_enabled,"
+    "trajectory_repair_attempt_count,trajectory_repair_accept_count,"
+    "trajectory_repair_piece_id,trajectory_repair_candidate_face_count,"
+    "trajectory_repair_ms,"
+    "trajectory_repair_global_violation_before_m,"
+    "trajectory_repair_global_violation_after_m,"
+    "trajectory_repair_piece_violation_before_m,"
+    "trajectory_repair_piece_violation_after_m,"
+    "trajectory_repair_overlap_previous_m,trajectory_repair_overlap_next_m,"
+    "trajectory_repair_reason,corridor_candidate_count,"
     "corridor_candidate_accept_count,corridor_rollback_applied,"
     "corridor_rollback_reason,best_corridor_violation_m,"
     "final_cost,trajectory_duration_s,"
@@ -172,7 +181,7 @@ bool ExperimentLogger::ensureDirectory() const
 
 bool ExperimentLogger::appendRun(const ExperimentRunRecord &record) const
 {
-  const std::string path = directory_ + "/ego_runs_v19_drone_" +
+  const std::string path = directory_ + "/ego_runs_v20_drone_" +
                            std::to_string(record.drone_id) + ".csv";
   const bool header = fileNeedsHeader(path);
   std::ofstream output(path, std::ios::out | std::ios::app);
@@ -185,7 +194,7 @@ bool ExperimentLogger::appendRun(const ExperimentRunRecord &record) const
     output << kRunHeader << '\n';
   }
   output << std::setprecision(17)
-         << 19 << ',' << csv(record.run_id) << ','
+         << 20 << ',' << csv(record.run_id) << ','
          << csv(record.planning_event_id) << ',' << record.timestamp_s << ','
          << csv(record.experiment_tag) << ',' << record.drone_id << ','
          << record.goal_id << ',' << record.replan_id << ','
@@ -295,6 +304,19 @@ bool ExperimentLogger::appendRun(const ExperimentRunRecord &record) const
          << record.corridor_penalty_weight_initial << ','
          << record.corridor_penalty_weight_final << ','
          << record.strict_corridor_rejected << ','
+         << record.trajectory_repair_enabled << ','
+         << record.trajectory_repair_attempt_count << ','
+         << record.trajectory_repair_accept_count << ','
+         << record.trajectory_repair_piece_id << ','
+         << record.trajectory_repair_candidate_face_count << ','
+         << record.trajectory_repair_ms << ','
+         << record.trajectory_repair_global_violation_before_m << ','
+         << record.trajectory_repair_global_violation_after_m << ','
+         << record.trajectory_repair_piece_violation_before_m << ','
+         << record.trajectory_repair_piece_violation_after_m << ','
+         << record.trajectory_repair_overlap_previous_m << ','
+         << record.trajectory_repair_overlap_next_m << ','
+         << csv(record.trajectory_repair_reason) << ','
          << record.corridor_candidate_count << ','
          << record.corridor_candidate_accept_count << ','
          << record.corridor_rollback_applied << ','
@@ -313,7 +335,7 @@ bool ExperimentLogger::appendCorridors(const ExperimentRunRecord &record,
   {
     return true;
   }
-  const std::string path = directory_ + "/ego_corridors_v19_drone_" +
+  const std::string path = directory_ + "/ego_corridors_v20_drone_" +
                            std::to_string(record.drone_id) + ".csv";
   const bool header = fileNeedsHeader(path);
   std::ofstream output(path, std::ios::out | std::ios::app);
@@ -329,7 +351,7 @@ bool ExperimentLogger::appendCorridors(const ExperimentRunRecord &record,
   for (const Corridor &corridor : corridors)
   {
     const CorridorMetrics &metrics = corridor.metrics;
-    output << 19 << ',' << csv(record.run_id) << ',' << record.timestamp_s << ','
+    output << 20 << ',' << csv(record.run_id) << ',' << record.timestamp_s << ','
            << csv(record.experiment_tag) << ',' << record.drone_id << ','
            << metrics.piece_id << ',' << csv(record.requested_method) << ','
            << csv(record.method) << ',' << metrics.face_count << ','

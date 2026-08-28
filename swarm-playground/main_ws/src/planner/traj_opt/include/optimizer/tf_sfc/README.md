@@ -97,6 +97,10 @@ The launch files expose the following private ROS parameters:
 | `tf_sfc/seed_retry_without_velocity_on_clearance_failure` | Permit one shared seed rebuild after clearance certification fails. |
 | `tf_sfc/seed_clearance_astar_enabled` | Use global clearance-certified edges for that rebuild; disable only for the v17 occupancy-A* ablation. |
 | `tf_sfc/seed_clearance_astar_time_limit` | Clearance-aware search timeout in seconds; defaults to 0.20 and is included in total planning time. |
+| `tf_sfc/trajectory_repair_enabled` | Rebuild the worst proposed corridor around actual initial MINCO samples before hard-parameterization setup. TF-SFC only. |
+| `tf_sfc/trajectory_repair_max_passes` | Bounded repair count; defaults to one. |
+| `tf_sfc/trajectory_repair_trigger` | Initial sampled violation in metres required before attempting repair. |
+| `tf_sfc/trajectory_repair_min_improvement` | Required piece-wise reduction unless the repaired piece already satisfies the final tolerance. |
 
 The hard mapping constrains junction points only. Polynomial interiors still use
 the sampled soft penalty and final sampled certification; this is not a
@@ -107,6 +111,15 @@ The visualization topic is private to the planner node:
 `/drone_<id>_ego_planner_node/tf_sfc/polyhedron_array`. An empty array means the
 latest request did not produce a valid corridor; it is not necessarily an RViz
 plugin error.
+
+## Bounded trajectory-feasibility repair
+
+Schema v20 may replace only the worst violating TF-SFC corridor with a
+candidate inflated around the actual initial MINCO curve. The candidate must
+remain obstacle-free and face-bounded, preserve both adjacent overlaps, improve
+the selected piece, and not worsen the global sampled violation. The accepted
+set is then frozen before hard junction parameterization and L-BFGS. This is a
+bounded corridor-front-end operation, not an optimizer-time corridor mutation.
 
 ## Recommended next implementation step
 

@@ -68,6 +68,10 @@
     <arg name="tf_sfc_seed_retry_without_velocity_on_clearance_failure" default="true"/>
     <arg name="tf_sfc_seed_clearance_astar_enabled" default="true"/>
     <arg name="tf_sfc_seed_clearance_astar_time_limit" default="0.20"/>
+    <arg name="tf_sfc_trajectory_repair_enabled" default="true"/>
+    <arg name="tf_sfc_trajectory_repair_max_passes" default="1"/>
+    <arg name="tf_sfc_trajectory_repair_trigger" default="0.001"/>
+    <arg name="tf_sfc_trajectory_repair_min_improvement" default="0.0001"/>
     <!-- main algorithm params -->
     <include file="$(find ego_planner)/launch/include/advanced_param.xml">
         <arg name="drone_id" value="$(arg drone_id)"/>
@@ -137,6 +141,10 @@
         <arg name="tf_sfc_seed_retry_without_velocity_on_clearance_failure" value="$(arg tf_sfc_seed_retry_without_velocity_on_clearance_failure)"/>
         <arg name="tf_sfc_seed_clearance_astar_enabled" value="$(arg tf_sfc_seed_clearance_astar_enabled)"/>
         <arg name="tf_sfc_seed_clearance_astar_time_limit" value="$(arg tf_sfc_seed_clearance_astar_time_limit)"/>
+        <arg name="tf_sfc_trajectory_repair_enabled" value="$(arg tf_sfc_trajectory_repair_enabled)"/>
+        <arg name="tf_sfc_trajectory_repair_max_passes" value="$(arg tf_sfc_trajectory_repair_max_passes)"/>
+        <arg name="tf_sfc_trajectory_repair_trigger" value="$(arg tf_sfc_trajectory_repair_trigger)"/>
+        <arg name="tf_sfc_trajectory_repair_min_improvement" value="$(arg tf_sfc_trajectory_repair_min_improvement)"/>
         <!-- 1: use 2D Nav Goal to select goal  -->
         <!-- 2: use global waypoints below  -->
         <arg name="flight_type" value="$(arg flight_type)" />
