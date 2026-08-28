@@ -154,6 +154,7 @@ bool FrenetDirectionProvider::computeDirections(const poly_traj::Piece &piece,
     return false;
   }
   directions.utility = Eigen::Vector3d(1.0, 0.5, 0.5);
+  directions.metric_eigenvalues = directions.utility;
   directions.metric_source = "frenet_velocity";
   directions.velocity_alignment_cosine =
       velocityAlignmentCosine(piece, directions.frame);
@@ -192,6 +193,7 @@ bool PcaDirectionProvider::computeDirections(const poly_traj::Piece &piece,
     return false;
   }
   orientPrimaryWithTrajectory(piece, directions.frame);
+  directions.metric_eigenvalues = directions.utility;
   directions.utility /= directions.utility.maxCoeff();
   directions.metric_source = "trajectory_pca";
   directions.velocity_alignment_cosine =
@@ -231,6 +233,7 @@ bool SensitivityDirectionProvider::computeDirections(const poly_traj::Piece &pie
     return false;
   }
   orientPrimaryWithTrajectory(piece, directions.frame);
+  directions.metric_eigenvalues = directions.utility;
   directions.utility /= directions.utility.maxCoeff();
   directions.metric_source = external_gramian
                                  ? "external_sensitivity_gramian"
@@ -238,6 +241,37 @@ bool SensitivityDirectionProvider::computeDirections(const poly_traj::Piece &pie
   directions.velocity_alignment_cosine =
       velocityAlignmentCosine(piece, directions.frame);
   directions.used_mode = DirectionMode::SENSITIVITY;
+  return true;
+}
+
+void FullObjectiveComplianceDirectionProvider::setPieceCompliances(
+    const std::vector<Eigen::Matrix3d,
+                      Eigen::aligned_allocator<Eigen::Matrix3d>> &compliances)
+{
+  compliances_ = compliances;
+}
+
+bool FullObjectiveComplianceDirectionProvider::computeDirections(
+    const poly_traj::Piece &piece,
+    const PointVector &samples,
+    const int piece_id,
+    DirectionSet &directions) const
+{
+  (void)samples;
+  if (piece_id < 0 || piece_id >= static_cast<int>(compliances_.size()) ||
+      !compliances_[piece_id].allFinite() ||
+      !eigendirectionsDescending(compliances_[piece_id], directions.frame,
+                                 directions.utility))
+  {
+    return false;
+  }
+  orientPrimaryWithTrajectory(piece, directions.frame);
+  directions.metric_eigenvalues = directions.utility;
+  directions.utility /= directions.utility.maxCoeff();
+  directions.metric_source = "minco_full_objective_compliance";
+  directions.velocity_alignment_cosine =
+      velocityAlignmentCosine(piece, directions.frame);
+  directions.used_mode = DirectionMode::FULL_OBJECTIVE_COMPLIANCE;
   return true;
 }
 
@@ -250,6 +284,11 @@ std::unique_ptr<DirectionProvider> makeDirectionProvider(DirectionMode mode)
   if (mode == DirectionMode::SENSITIVITY)
   {
     return std::unique_ptr<DirectionProvider>(new SensitivityDirectionProvider());
+  }
+  if (mode == DirectionMode::FULL_OBJECTIVE_COMPLIANCE)
+  {
+    return std::unique_ptr<DirectionProvider>(
+        new FullObjectiveComplianceDirectionProvider());
   }
   return std::unique_ptr<DirectionProvider>(new PcaDirectionProvider());
 }
