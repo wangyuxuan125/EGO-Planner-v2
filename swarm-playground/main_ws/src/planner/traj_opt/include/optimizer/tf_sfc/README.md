@@ -97,10 +97,13 @@ The launch files expose the following private ROS parameters:
 | `tf_sfc/seed_retry_without_velocity_on_clearance_failure` | Permit one shared seed rebuild after clearance certification fails. |
 | `tf_sfc/seed_clearance_astar_enabled` | Use global clearance-certified edges for that rebuild; disable only for the v17 occupancy-A* ablation. |
 | `tf_sfc/seed_clearance_astar_time_limit` | Clearance-aware search timeout in seconds; defaults to 0.20 and is included in total planning time. |
-| `tf_sfc/trajectory_repair_enabled` | Rebuild the worst proposed corridor around actual initial MINCO samples before hard-parameterization setup. TF-SFC only. |
+| `tf_sfc/trajectory_repair_enabled` | Enable bounded worst-piece corridor repair for TF-SFC only. |
+| `tf_sfc/trajectory_repair_seed_fallback_enabled` | If trajectory samples cannot seed an obstacle-free region, retry with the certified A* segment while retaining MINCO-derived directions. |
 | `tf_sfc/trajectory_repair_max_passes` | Bounded repair count; defaults to one. |
 | `tf_sfc/trajectory_repair_trigger` | Initial sampled violation in metres required before attempting repair. |
 | `tf_sfc/trajectory_repair_min_improvement` | Required piece-wise reduction unless the repaired piece already satisfies the final tolerance. |
+| `tf_sfc/post_optimization_repair_enabled` | Permit one outer repair when a collision-free optimized trajectory would otherwise fail strict corridor certification. |
+| `tf_sfc/post_optimization_repair_max_passes` | Hard cap on outer repair/re-optimization passes; defaults to one. |
 
 The hard mapping constrains junction points only. Polynomial interiors still use
 the sampled soft penalty and final sampled certification; this is not a
@@ -114,12 +117,18 @@ plugin error.
 
 ## Bounded trajectory-feasibility repair
 
-Schema v20 may replace only the worst violating TF-SFC corridor with a
-candidate inflated around the actual initial MINCO curve. The candidate must
-remain obstacle-free and face-bounded, preserve both adjacent overlaps, improve
-the selected piece, and not worsen the global sampled violation. The accepted
-set is then frozen before hard junction parameterization and L-BFGS. This is a
-bounded corridor-front-end operation, not an optimizer-time corridor mutation.
+Schema v21 first tries the actual MINCO samples. If those samples cannot seed
+an obstacle-free convex region, it retries with the matching certified A* seed
+segment while retaining directions computed from the MINCO piece. The
+candidate must remain obstacle-free and face-bounded, preserve both adjacent
+overlaps, improve the selected piece, and not worsen global sampled violation.
+
+If ordinary strict continuation would otherwise reject a collision-free
+optimized trajectory, v21 may perform one outer repair. The repaired set must
+admit a fresh hard parameterization that re-encodes the current junctions
+without displacement. It is then frozen and L-BFGS runs once more; no further
+continuation is allowed after that pass. Liu/EllipsoidDecomp and original EGO
+do not enter either repair path.
 
 ## Recommended next implementation step
 

@@ -113,12 +113,14 @@ struct Parameters
   // post-search detour.
   bool seed_retry_without_velocity_on_clearance_failure = true;
   bool seed_clearance_astar_enabled = true;
-  // Proposed-method-only bounded pre-optimization repair.  A candidate is
-  // rebuilt around the actual initial MINCO samples of the worst violating
-  // piece, then accepted only when it remains face-bounded, obstacle-free,
-  // overlap-valid, and monotonically improves that piece without worsening
-  // the global sampled violation.
+  // Proposed-method-only bounded repair.  The trajectory samples are tried
+  // first.  If they cannot seed an obstacle-free convex region, a certified
+  // A* seed segment may be used while retaining the MINCO-derived directions.
   bool trajectory_repair_enabled = true;
+  bool trajectory_repair_seed_fallback_enabled = true;
+  // One outer repair/re-optimization is allowed only after ordinary strict
+  // corridor continuation would otherwise reject a collision-free candidate.
+  bool post_optimization_repair_enabled = true;
   bool visualization_enabled = true;
   bool log_enabled = true;
   std::string visualization_frame = "world";
@@ -135,6 +137,7 @@ struct Parameters
   int min_valid_pieces = 1;
   int max_enforcement_passes = 2;
   int trajectory_repair_max_passes = 1;
+  int post_optimization_repair_max_passes = 1;
   int hard_max_vertices = 64;
   double safety_margin = 0.25;
   // Required slack for non-junction trajectory samples against obstacle cuts.
@@ -234,6 +237,9 @@ struct TrajectoryRepairResult
   double piece_violation_after_m = 0.0;
   double overlap_previous_m = -1.0;
   double overlap_next_m = -1.0;
+  bool seed_fallback_used = false;
+  std::string sample_source = "trajectory_samples";
+  std::string primary_failure_reason = "none";
   std::string reason = "not_evaluated";
 };
 

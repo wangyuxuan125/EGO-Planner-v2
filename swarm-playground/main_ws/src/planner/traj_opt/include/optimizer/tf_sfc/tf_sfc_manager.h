@@ -44,13 +44,19 @@ public:
   CorridorEvaluation evaluateTrajectory(
       const poly_traj::Trajectory &trajectory) const;
 
-  // Rebuild only the worst violating proposed corridor around the actual
-  // initial MINCO samples.  The original set is retained unless the candidate
-  // passes obstacle/face/overlap gates and monotonically improves feasibility.
+  // Rebuild only the worst violating proposed corridor. The actual MINCO
+  // samples are tried first; a certified seed segment may be used as a
+  // geometric fallback while retaining MINCO-derived directions. The original
+  // set is retained unless all obstacle/face/overlap/improvement gates pass.
   bool repairWorstCorridorForTrajectory(
       const poly_traj::Trajectory &trajectory,
+      const PointVector &seed_path,
       CorridorVector &corridors,
       TrajectoryRepairResult &result);
+
+  // Restore/synchronize a previously validated frozen set after an outer
+  // repair fails a downstream hard-parameterization gate.
+  void setCorridors(const CorridorVector &corridors) { corridors_ = corridors; }
 
   void setCorridorPenaltyScale(double scale);
 

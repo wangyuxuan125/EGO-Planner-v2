@@ -85,7 +85,18 @@ const char *kRunHeader =
     "trajectory_repair_piece_violation_before_m,"
     "trajectory_repair_piece_violation_after_m,"
     "trajectory_repair_overlap_previous_m,trajectory_repair_overlap_next_m,"
-    "trajectory_repair_reason,corridor_candidate_count,"
+    "trajectory_repair_seed_fallback_used,trajectory_repair_sample_source,"
+    "trajectory_repair_primary_failure_reason,trajectory_repair_reason,"
+    "post_optimization_repair_enabled,"
+    "post_optimization_repair_attempt_count,"
+    "post_optimization_repair_accept_count,"
+    "post_optimization_repair_piece_id,"
+    "post_optimization_repair_candidate_face_count,"
+    "post_optimization_repair_ms,"
+    "post_optimization_repair_violation_before_m,"
+    "post_optimization_repair_violation_after_m,"
+    "post_optimization_repair_sample_source,"
+    "post_optimization_repair_reason,corridor_candidate_count,"
     "corridor_candidate_accept_count,corridor_rollback_applied,"
     "corridor_rollback_reason,best_corridor_violation_m,"
     "final_cost,trajectory_duration_s,"
@@ -181,7 +192,7 @@ bool ExperimentLogger::ensureDirectory() const
 
 bool ExperimentLogger::appendRun(const ExperimentRunRecord &record) const
 {
-  const std::string path = directory_ + "/ego_runs_v20_drone_" +
+  const std::string path = directory_ + "/ego_runs_v21_drone_" +
                            std::to_string(record.drone_id) + ".csv";
   const bool header = fileNeedsHeader(path);
   std::ofstream output(path, std::ios::out | std::ios::app);
@@ -194,7 +205,7 @@ bool ExperimentLogger::appendRun(const ExperimentRunRecord &record) const
     output << kRunHeader << '\n';
   }
   output << std::setprecision(17)
-         << 20 << ',' << csv(record.run_id) << ','
+         << 21 << ',' << csv(record.run_id) << ','
          << csv(record.planning_event_id) << ',' << record.timestamp_s << ','
          << csv(record.experiment_tag) << ',' << record.drone_id << ','
          << record.goal_id << ',' << record.replan_id << ','
@@ -316,7 +327,20 @@ bool ExperimentLogger::appendRun(const ExperimentRunRecord &record) const
          << record.trajectory_repair_piece_violation_after_m << ','
          << record.trajectory_repair_overlap_previous_m << ','
          << record.trajectory_repair_overlap_next_m << ','
+         << record.trajectory_repair_seed_fallback_used << ','
+         << csv(record.trajectory_repair_sample_source) << ','
+         << csv(record.trajectory_repair_primary_failure_reason) << ','
          << csv(record.trajectory_repair_reason) << ','
+         << record.post_optimization_repair_enabled << ','
+         << record.post_optimization_repair_attempt_count << ','
+         << record.post_optimization_repair_accept_count << ','
+         << record.post_optimization_repair_piece_id << ','
+         << record.post_optimization_repair_candidate_face_count << ','
+         << record.post_optimization_repair_ms << ','
+         << record.post_optimization_repair_violation_before_m << ','
+         << record.post_optimization_repair_violation_after_m << ','
+         << csv(record.post_optimization_repair_sample_source) << ','
+         << csv(record.post_optimization_repair_reason) << ','
          << record.corridor_candidate_count << ','
          << record.corridor_candidate_accept_count << ','
          << record.corridor_rollback_applied << ','
@@ -335,7 +359,7 @@ bool ExperimentLogger::appendCorridors(const ExperimentRunRecord &record,
   {
     return true;
   }
-  const std::string path = directory_ + "/ego_corridors_v20_drone_" +
+  const std::string path = directory_ + "/ego_corridors_v21_drone_" +
                            std::to_string(record.drone_id) + ".csv";
   const bool header = fileNeedsHeader(path);
   std::ofstream output(path, std::ios::out | std::ios::app);
@@ -351,7 +375,7 @@ bool ExperimentLogger::appendCorridors(const ExperimentRunRecord &record,
   for (const Corridor &corridor : corridors)
   {
     const CorridorMetrics &metrics = corridor.metrics;
-    output << 20 << ',' << csv(record.run_id) << ',' << record.timestamp_s << ','
+    output << 21 << ',' << csv(record.run_id) << ',' << record.timestamp_s << ','
            << csv(record.experiment_tag) << ',' << record.drone_id << ','
            << metrics.piece_id << ',' << csv(record.requested_method) << ','
            << csv(record.method) << ',' << metrics.face_count << ','

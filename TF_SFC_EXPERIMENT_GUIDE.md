@@ -527,3 +527,49 @@ candidate face count, repair time, global and piece violations before/after,
 both neighbor overlap radii, and the rejection/acceptance reason. The primary
 gate is a reduction of strict corridor rejections and the initial 13--15 call
 failure streak without increasing faces or P90 planning time materially.
+
+## EGO schema-v21: certified-seed and bounded outer repair
+
+The v20 difficult-goal run completed the mission and respected the 12-face and
+0.02 m overlap gates, but 32/34 attempted repairs failed before producing a
+face because the initial MINCO samples could not seed an obstacle-free convex
+region. Six other calls were initially within the corridor but drifted outside
+it during optimization. Schema v21 addresses those two failure classes without
+changing the shared A* front end:
+
+1. try trajectory-sample repair as in v20;
+2. on a retryable inflation failure, rebuild from the already certified seed
+   segment while retaining directions computed from the actual MINCO piece;
+3. retain the face, obstacle, adjacent-overlap, piece-improvement and global
+   non-worsening gates;
+4. if ordinary strict continuation would reject a collision-free optimized
+   trajectory, allow at most one outer repair;
+5. require a fresh hard parameterization that re-encodes every current
+   junction with at most 1e-5 m displacement, then freeze it and run L-BFGS
+   once more with no additional continuation.
+
+First v21 regression:
+
+```bash
+roslaunch ego_planner single_drone_interactive.launch \
+  map_seed:=42 \
+  tf_sfc_enabled:=true \
+  tf_sfc_corridor_method:=tf_sfc \
+  tf_sfc_direction_mode:=1 \
+  tf_sfc_allow_partial_corridors:=true \
+  tf_sfc_allow_ego_fallback:=false \
+  tf_sfc_hard_corridor_parameterization:=true \
+  tf_sfc_trajectory_repair_enabled:=true \
+  tf_sfc_trajectory_repair_seed_fallback_enabled:=true \
+  tf_sfc_trajectory_repair_max_passes:=1 \
+  tf_sfc_post_optimization_repair_enabled:=true \
+  tf_sfc_post_optimization_repair_max_passes:=1 \
+  tf_sfc_experiment_tag:=pca_tf_sfc_v21_bounded_repair
+```
+
+For ablations, disable seed fallback while leaving repair enabled, then disable
+only post-optimization repair. Schema-v21 logs the repair sample source,
+primary trajectory-inflation failure, seed fallback use, and separate outer
+repair attempts/accepts, timing, violations, face count and reason. The v21
+gate is fewer trajectory-inflation failures and strict rejections without a
+face/overlap regression or material P90 planning-time increase.

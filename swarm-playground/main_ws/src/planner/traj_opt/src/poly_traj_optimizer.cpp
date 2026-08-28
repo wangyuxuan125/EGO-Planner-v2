@@ -1476,6 +1476,13 @@ namespace ego_planner
     int trajectory_repair_accept_count = 0;
     double trajectory_repair_ms = 0.0;
     tf_sfc::TrajectoryRepairResult trajectory_repair_result;
+    const bool post_optimization_repair_enabled =
+        trajectory_repair_enabled &&
+        tf_sfc_parameters_.post_optimization_repair_enabled;
+    int post_optimization_repair_attempt_count = 0;
+    int post_optimization_repair_accept_count = 0;
+    double post_optimization_repair_ms = 0.0;
+    tf_sfc::TrajectoryRepairResult post_optimization_repair_result;
     double optimizer_time_ms = 0.0;
     double tf_sfc_generation_ms = 0.0;
     double tf_sfc_inflation_ms = 0.0;
@@ -1619,7 +1626,33 @@ namespace ego_planner
               trajectory_repair_result.overlap_previous_m;
           record.trajectory_repair_overlap_next_m =
               trajectory_repair_result.overlap_next_m;
+          record.trajectory_repair_seed_fallback_used =
+              trajectory_repair_result.seed_fallback_used;
+          record.trajectory_repair_sample_source =
+              trajectory_repair_result.sample_source;
+          record.trajectory_repair_primary_failure_reason =
+              trajectory_repair_result.primary_failure_reason;
           record.trajectory_repair_reason = trajectory_repair_result.reason;
+          record.post_optimization_repair_enabled =
+              post_optimization_repair_enabled;
+          record.post_optimization_repair_attempt_count =
+              post_optimization_repair_attempt_count;
+          record.post_optimization_repair_accept_count =
+              post_optimization_repair_accept_count;
+          record.post_optimization_repair_piece_id =
+              post_optimization_repair_result.piece_id;
+          record.post_optimization_repair_candidate_face_count =
+              post_optimization_repair_result.candidate_face_count;
+          record.post_optimization_repair_ms =
+              post_optimization_repair_ms;
+          record.post_optimization_repair_violation_before_m =
+              post_optimization_repair_result.global_violation_before_m;
+          record.post_optimization_repair_violation_after_m =
+              post_optimization_repair_result.global_violation_after_m;
+          record.post_optimization_repair_sample_source =
+              post_optimization_repair_result.sample_source;
+          record.post_optimization_repair_reason =
+              post_optimization_repair_result.reason;
         };
 
     // Preparision 2: Trajectory related params
@@ -1628,6 +1661,7 @@ namespace ego_planner
     jerkOpt_.reset(iniState, finState, piece_num_);
 
     Eigen::MatrixXd guidedInnerPts = initInnerPts;
+    tf_sfc::PointVector active_seed_path;
     tf_corridors_.clear();
     hard_corridor_parameterization_.clear();
     if (tf_sfc_manager_)
@@ -1858,6 +1892,7 @@ namespace ego_planner
           corridor_ok = tf_sfc_manager_->generateFromSeedPath(
               jerkOpt_.getTraj(), seed_path, uncovered_failure_reason,
               tf_corridors_);
+          active_seed_path = seed_path;
           tf_sfc_inflation_ms +=
               (ros::WallTime::now() - inflation_started).toSec() * 1000.0;
 
@@ -1958,6 +1993,7 @@ namespace ego_planner
               corridor_ok = tf_sfc_manager_->generateFromSeedPath(
                   jerkOpt_.getTraj(), fallback_seed_path,
                   fallback_uncovered_failure_reason, tf_corridors_);
+              active_seed_path = fallback_seed_path;
               tf_sfc_inflation_ms +=
                   (ros::WallTime::now() - retry_inflation_started)
                       .toSec() *
@@ -2004,7 +2040,8 @@ namespace ego_planner
           tf_sfc::TrajectoryRepairResult pass_result;
           const bool accepted =
               tf_sfc_manager_->repairWorstCorridorForTrajectory(
-                  jerkOpt_.getTraj(), tf_corridors_, pass_result);
+                  jerkOpt_.getTraj(), active_seed_path, tf_corridors_,
+                  pass_result);
           trajectory_repair_result = pass_result;
           trajectory_repair_ms += pass_result.generation_time_ms;
           tf_sfc_inflation_ms += pass_result.generation_time_ms;
@@ -2017,24 +2054,27 @@ namespace ego_planner
             ++trajectory_repair_accept_count;
             ROS_INFO(
                 "TF-SFC trajectory repair accepted for piece %d: "
-                "global %.6f -> %.6f m, piece %.6f -> %.6f m, faces=%d.",
+                "global %.6f -> %.6f m, piece %.6f -> %.6f m, "
+                "source=%s, faces=%d.",
                 pass_result.piece_id,
                 pass_result.global_violation_before_m,
                 pass_result.global_violation_after_m,
                 pass_result.piece_violation_before_m,
                 pass_result.piece_violation_after_m,
+                pass_result.sample_source.c_str(),
                 pass_result.candidate_face_count);
           }
           else if (pass_result.attempted)
           {
             ROS_WARN(
                 "TF-SFC trajectory repair rejected for piece %d (%s): "
-                "global %.6f -> %.6f m, piece %.6f -> %.6f m.",
+                "global %.6f -> %.6f m, piece %.6f -> %.6f m, source=%s.",
                 pass_result.piece_id, pass_result.reason.c_str(),
                 pass_result.global_violation_before_m,
                 pass_result.global_violation_after_m,
                 pass_result.piece_violation_before_m,
-                pass_result.piece_violation_after_m);
+                pass_result.piece_violation_after_m,
+                pass_result.sample_source.c_str());
           }
           if (!accepted ||
               pass_result.global_violation_after_m <=
@@ -2315,6 +2355,130 @@ namespace ego_planner
       corridor_rollback_reason = reason;
       return true;
     };
+    bool post_optimization_repair_active = false;
+    auto tryPostOptimizationRepair =
+        [&](const tf_sfc::CorridorEvaluation &evaluation) {
+          if (!post_optimization_repair_enabled ||
+              !hard_parameterization_active || !tf_sfc_manager_ ||
+              active_seed_path.size() < 2 ||
+              evaluation.max_violation_m <=
+                  tf_sfc_parameters_.max_final_violation ||
+              post_optimization_repair_attempt_count >=
+                  std::max(
+                      tf_sfc_parameters_
+                          .post_optimization_repair_max_passes,
+                      0))
+          {
+            return false;
+          }
+
+          const tf_sfc::CorridorVector previous_corridors = tf_corridors_;
+          tf_sfc::TrajectoryRepairResult repair_result;
+          const poly_traj::Trajectory repair_trajectory = jerkOpt_.getTraj();
+          const bool corridor_repaired =
+              tf_sfc_manager_->repairWorstCorridorForTrajectory(
+                  repair_trajectory, active_seed_path, tf_corridors_,
+                  repair_result);
+          post_optimization_repair_result = repair_result;
+          post_optimization_repair_ms += repair_result.generation_time_ms;
+          tf_sfc_inflation_ms += repair_result.generation_time_ms;
+          if (repair_result.attempted)
+          {
+            ++post_optimization_repair_attempt_count;
+          }
+          if (!corridor_repaired)
+          {
+            return false;
+          }
+
+          tf_sfc::HardCorridorParameterization repaired_parameterization;
+          if (!repaired_parameterization.configure(
+                  tf_corridors_, piece_num_,
+                  tf_sfc_parameters_.hard_max_vertices,
+                  tf_sfc_parameters_.hard_vertex_tolerance))
+          {
+            tf_corridors_ = previous_corridors;
+            tf_sfc_manager_->setCorridors(previous_corridors);
+            post_optimization_repair_result.accepted = false;
+            post_optimization_repair_result.reason =
+                "hard_parameterization_failure";
+            return false;
+          }
+
+          const Eigen::MatrixXd positions = repair_trajectory.getPositions();
+          if (positions.cols() != piece_num_ + 1)
+          {
+            tf_corridors_ = previous_corridors;
+            tf_sfc_manager_->setCorridors(previous_corridors);
+            post_optimization_repair_result.accepted = false;
+            post_optimization_repair_result.reason =
+                "trajectory_dimension_mismatch";
+            return false;
+          }
+          const Eigen::MatrixXd current_inner_points =
+              positions.middleCols(1, std::max(piece_num_ - 1, 0));
+          Eigen::VectorXd repaired_spatial;
+          Eigen::MatrixXd decoded_inner_points;
+          if (!repaired_parameterization.encode(current_inner_points,
+                                                 repaired_spatial) ||
+              !repaired_parameterization.decode(repaired_spatial,
+                                                 decoded_inner_points) ||
+              decoded_inner_points.rows() != current_inner_points.rows() ||
+              decoded_inner_points.cols() != current_inner_points.cols() ||
+              (current_inner_points.size() > 0 &&
+               (decoded_inner_points - current_inner_points)
+                       .cwiseAbs()
+                       .maxCoeff() > 1.0e-5))
+          {
+            tf_corridors_ = previous_corridors;
+            tf_sfc_manager_->setCorridors(previous_corridors);
+            post_optimization_repair_result.accepted = false;
+            post_optimization_repair_result.reason =
+                "hard_reencode_shift";
+            return false;
+          }
+
+          const int repaired_spatial_variable_num =
+              repaired_parameterization.spatialVariableCount();
+          const int repaired_variable_num =
+              repaired_spatial_variable_num + piece_num_;
+          std::vector<double> repaired_decision(repaired_variable_num, 0.0);
+          Eigen::Map<Eigen::VectorXd>(repaired_decision.data(),
+                                      repaired_spatial_variable_num) =
+              repaired_spatial;
+          Eigen::Map<Eigen::VectorXd> repaired_virtual_times(
+              repaired_decision.data() + repaired_spatial_variable_num,
+              piece_num_);
+          RealT2VirtualT(repair_trajectory.getDurations(),
+                         repaired_virtual_times);
+
+          hard_corridor_parameterization_ = repaired_parameterization;
+          spatial_variable_num_ = repaired_spatial_variable_num;
+          variable_num_ = repaired_variable_num;
+          x_init.swap(repaired_decision);
+          best_corridor_x.assign(variable_num_, 0.0);
+          best_corridor_candidate_valid = false;
+          best_corridor_cost = std::numeric_limits<double>::infinity();
+          best_corridor_violation_m =
+              std::numeric_limits<double>::infinity();
+          corridor_penalty_scale = 1.0;
+          tf_sfc_manager_->setCorridorPenaltyScale(corridor_penalty_scale);
+          final_cost = std::numeric_limits<double>::infinity();
+          post_optimization_repair_active = true;
+          ++post_optimization_repair_accept_count;
+          logged_corridors = tf_corridors_;
+          publishTfSfcCorridors(logged_corridors);
+          ROS_WARN(
+              "TF-SFC bounded post-optimization repair accepted for piece "
+              "%d: %.6f -> %.6f m, source=%s, faces=%d; re-optimizing "
+              "once.",
+              repair_result.piece_id,
+              repair_result.global_violation_before_m,
+              repair_result.global_violation_after_m,
+              repair_result.sample_source.c_str(),
+              repair_result.candidate_face_count);
+          return true;
+        };
 
     // Preparision 3: LBFGS related params
     lbfgs::lbfgs_parameter_t lbfgs_params;
@@ -2446,26 +2610,36 @@ namespace ego_planner
               }
               else
               {
-                rollbackCorridorCandidate("violation_not_improved");
-                strict_corridor_rejected = true;
-                final_collision_free = true;
-                terminal_failure_reason =
-                    "corridor_violation_not_improved";
-                ROS_ERROR_THROTTLE(
-                    1.0,
-                    "TF-SFC continuation did not improve sampled violation "
-                    "(candidate %.6f m, best %.6f m); restoring the best safe "
-                    "iterate and rejecting this plan.",
-                    enforcement_evaluation.max_violation_m,
-                    best_corridor_violation_m);
+                if (tryPostOptimizationRepair(enforcement_evaluation))
+                {
+                  corridor_retry_requested = true;
+                  terminal_failure_reason = "none";
+                }
+                else
+                {
+                  rollbackCorridorCandidate("violation_not_improved");
+                  strict_corridor_rejected = true;
+                  final_collision_free = true;
+                  terminal_failure_reason =
+                      "corridor_violation_not_improved";
+                  ROS_ERROR_THROTTLE(
+                      1.0,
+                      "TF-SFC continuation did not improve sampled violation "
+                      "(candidate %.6f m, best %.6f m); restoring the best "
+                      "safe iterate and rejecting this plan.",
+                      enforcement_evaluation.max_violation_m,
+                      best_corridor_violation_m);
+                }
               }
             }
 
-            if (!strict_corridor_rejected && strict_check_enabled &&
+            if (!strict_corridor_rejected && !corridor_retry_requested &&
+                strict_check_enabled &&
                 enforcement_evaluation.max_violation_m >
                     tf_sfc_parameters_.max_final_violation)
             {
               const bool can_continue =
+                  !post_optimization_repair_active &&
                   tf_sfc_parameters_.use_soft_penalty &&
                   tf_sfc_parameters_.weight > 0.0 &&
                   tf_sfc_parameters_.enforcement_weight_multiplier > 1.0 &&
@@ -2490,20 +2664,29 @@ namespace ego_planner
               }
               else
               {
-                rollbackCorridorCandidate("max_enforcement_passes");
-                strict_corridor_rejected = true;
-                terminal_failure_reason =
-                    "corridor_violation_limit";
-                ROS_ERROR_THROTTLE(
-                    1.0,
-                    "TF-SFC sampled final violation %.6f m exceeds %.6f m "
-                    "after %d continuation pass(es); rejecting this plan.",
-                    enforcement_evaluation.max_violation_m,
-                    tf_sfc_parameters_.max_final_violation,
-                    corridor_enforcement_passes);
+                if (tryPostOptimizationRepair(enforcement_evaluation))
+                {
+                  corridor_retry_requested = true;
+                  terminal_failure_reason = "none";
+                }
+                else
+                {
+                  rollbackCorridorCandidate("max_enforcement_passes");
+                  strict_corridor_rejected = true;
+                  terminal_failure_reason =
+                      "corridor_violation_limit";
+                  ROS_ERROR_THROTTLE(
+                      1.0,
+                      "TF-SFC sampled final violation %.6f m exceeds %.6f m "
+                      "after %d continuation pass(es); rejecting this plan.",
+                      enforcement_evaluation.max_violation_m,
+                      tf_sfc_parameters_.max_final_violation,
+                      corridor_enforcement_passes);
+                }
               }
             }
-            else if (!strict_corridor_rejected)
+            else if (!strict_corridor_rejected &&
+                     !corridor_retry_requested)
             {
               flag_success = true;
               PRINTF_COND("\033[32miter=%d,time(ms)=%5.3f,total_t(ms)=%5.3f,cost=%5.3f\n\033[0m", iter_num_, time_ms, total_time_ms, final_cost);
@@ -2511,6 +2694,18 @@ namespace ego_planner
           }
           else
           {
+            if (post_optimization_repair_active)
+            {
+              strict_corridor_rejected = true;
+              final_obstacle_collision = true;
+              terminal_failure_reason =
+                  "post_repair_obstacle_collision";
+              ROS_ERROR_THROTTLE(
+                  1.0,
+                  "TF-SFC bounded post-repair optimization collided; "
+                  "rejecting without another restart.");
+              continue;
+            }
             if (corridor_enforcement_passes > 0 &&
                 rollbackCorridorCandidate("collision_candidate"))
             {
@@ -2543,6 +2738,18 @@ namespace ego_planner
         }
         else if (!candidate_invalid)
         {
+          if (post_optimization_repair_active)
+          {
+            strict_corridor_rejected = true;
+            final_swarm_clearance_failure = true;
+            terminal_failure_reason =
+                "post_repair_swarm_clearance";
+            ROS_ERROR_THROTTLE(
+                1.0,
+                "TF-SFC bounded post-repair optimization violated swarm "
+                "clearance; rejecting without another restart.");
+            continue;
+          }
           if (corridor_enforcement_passes > 0 &&
               rollbackCorridorCandidate("swarm_clearance_candidate"))
           {
@@ -2566,6 +2773,16 @@ namespace ego_planner
       }
       else if (result == lbfgs::LBFGSERR_CANCELED)
       {
+        if (post_optimization_repair_active)
+        {
+          strict_corridor_rejected = true;
+          terminal_failure_reason = "post_repair_solver_cancelled";
+          ROS_ERROR_THROTTLE(
+              1.0,
+              "TF-SFC bounded post-repair optimization was cancelled; "
+              "rejecting without another rebound.");
+          continue;
+        }
         if (corridor_enforcement_passes > 0 &&
             rollbackCorridorCandidate("solver_cancelled"))
         {
@@ -2594,6 +2811,16 @@ namespace ego_planner
       }
       else
       {
+        if (post_optimization_repair_active)
+        {
+          strict_corridor_rejected = true;
+          terminal_failure_reason = "post_repair_solver_error";
+          ROS_ERROR_THROTTLE(
+              1.0,
+              "TF-SFC bounded post-repair optimization failed; rejecting "
+              "without another solver pass.");
+          continue;
+        }
         if (corridor_enforcement_passes > 0 &&
             rollbackCorridorCandidate("solver_error"))
         {
@@ -4602,8 +4829,15 @@ namespace ego_planner
              tf_sfc_parameters_.seed_clearance_astar_time_limit, 0.20);
     nh.param("tf_sfc/trajectory_repair_enabled",
              tf_sfc_parameters_.trajectory_repair_enabled, true);
+    nh.param("tf_sfc/trajectory_repair_seed_fallback_enabled",
+             tf_sfc_parameters_.trajectory_repair_seed_fallback_enabled,
+             true);
     nh.param("tf_sfc/trajectory_repair_max_passes",
              tf_sfc_parameters_.trajectory_repair_max_passes, 1);
+    nh.param("tf_sfc/post_optimization_repair_enabled",
+             tf_sfc_parameters_.post_optimization_repair_enabled, true);
+    nh.param("tf_sfc/post_optimization_repair_max_passes",
+             tf_sfc_parameters_.post_optimization_repair_max_passes, 1);
     nh.param("tf_sfc/trajectory_repair_trigger",
              tf_sfc_parameters_.trajectory_repair_trigger, 1.0e-3);
     nh.param("tf_sfc/trajectory_repair_min_improvement",
@@ -4619,6 +4853,12 @@ namespace ego_planner
       ROS_WARN("tf_sfc/trajectory_repair_max_passes must be non-negative; "
                "using 0.");
       tf_sfc_parameters_.trajectory_repair_max_passes = 0;
+    }
+    if (tf_sfc_parameters_.post_optimization_repair_max_passes < 0)
+    {
+      ROS_WARN("tf_sfc/post_optimization_repair_max_passes must be "
+               "non-negative; using 0.");
+      tf_sfc_parameters_.post_optimization_repair_max_passes = 0;
     }
     if (tf_sfc_parameters_.trajectory_repair_trigger < 0.0)
     {

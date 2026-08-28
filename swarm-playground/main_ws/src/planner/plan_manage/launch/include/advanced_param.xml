@@ -76,7 +76,10 @@
     <arg name="tf_sfc_seed_clearance_astar_enabled" default="true"/>
     <arg name="tf_sfc_seed_clearance_astar_time_limit" default="0.20"/>
     <arg name="tf_sfc_trajectory_repair_enabled" default="true"/>
+    <arg name="tf_sfc_trajectory_repair_seed_fallback_enabled" default="true"/>
     <arg name="tf_sfc_trajectory_repair_max_passes" default="1"/>
+    <arg name="tf_sfc_post_optimization_repair_enabled" default="true"/>
+    <arg name="tf_sfc_post_optimization_repair_max_passes" default="1"/>
     <arg name="tf_sfc_trajectory_repair_trigger" default="0.001"/>
     <arg name="tf_sfc_trajectory_repair_min_improvement" default="0.0001"/>
     <!-- main node -->
@@ -229,7 +232,10 @@
         <param name="tf_sfc/seed_clearance_astar_enabled" value="$(arg tf_sfc_seed_clearance_astar_enabled)" type="bool"/>
         <param name="tf_sfc/seed_clearance_astar_time_limit" value="$(arg tf_sfc_seed_clearance_astar_time_limit)" type="double"/>
         <param name="tf_sfc/trajectory_repair_enabled" value="$(arg tf_sfc_trajectory_repair_enabled)" type="bool"/>
+        <param name="tf_sfc/trajectory_repair_seed_fallback_enabled" value="$(arg tf_sfc_trajectory_repair_seed_fallback_enabled)" type="bool"/>
         <param name="tf_sfc/trajectory_repair_max_passes" value="$(arg tf_sfc_trajectory_repair_max_passes)" type="int"/>
+        <param name="tf_sfc/post_optimization_repair_enabled" value="$(arg tf_sfc_post_optimization_repair_enabled)" type="bool"/>
+        <param name="tf_sfc/post_optimization_repair_max_passes" value="$(arg tf_sfc_post_optimization_repair_max_passes)" type="int"/>
         <param name="tf_sfc/trajectory_repair_trigger" value="$(arg tf_sfc_trajectory_repair_trigger)" type="double"/>
         <param name="tf_sfc/trajectory_repair_min_improvement" value="$(arg tf_sfc_trajectory_repair_min_improvement)" type="double"/>
     </node>

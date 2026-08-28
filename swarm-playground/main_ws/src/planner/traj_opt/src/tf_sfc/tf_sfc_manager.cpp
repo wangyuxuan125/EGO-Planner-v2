@@ -759,6 +759,7 @@ double TfSfcManager::pieceViolation(const poly_traj::Piece &piece,
 
 bool TfSfcManager::repairWorstCorridorForTrajectory(
     const poly_traj::Trajectory &trajectory,
+    const PointVector &seed_path,
     CorridorVector &corridors,
     TrajectoryRepairResult &result)
 {
@@ -806,14 +807,11 @@ bool TfSfcManager::repairWorstCorridorForTrajectory(
   result.attempted = true;
 
   const auto started = std::chrono::steady_clock::now();
-  const PointVector samples = samplePiece(piece);
+  const PointVector trajectory_samples = samplePiece(piece);
   DirectionSet directions;
   directions.requested_mode = parameters_.direction_mode;
   Corridor candidate;
-  candidate.metrics.piece_id = piece_id;
-  candidate.metrics.requested_direction_mode =
-      static_cast<int>(parameters_.direction_mode);
-  if (!computeDirections(piece, samples, piece_id, directions))
+  if (!computeDirections(piece, trajectory_samples, piece_id, directions))
   {
     result.reason = "direction_failure";
     result.generation_time_ms = std::chrono::duration<double, std::milli>(
@@ -821,22 +819,59 @@ bool TfSfcManager::repairWorstCorridorForTrajectory(
                                     .count();
     return false;
   }
-  candidate.metrics.used_direction_mode =
-      static_cast<int>(directions.used_mode);
+  const auto inflate_candidate =
+      [&](const PointVector &inflation_samples,
+          FailureReason &failure_reason) {
+        candidate = Corridor();
+        candidate.metrics.piece_id = piece_id;
+        candidate.metrics.requested_direction_mode =
+            static_cast<int>(parameters_.direction_mode);
+        candidate.metrics.used_direction_mode =
+            static_cast<int>(directions.used_mode);
+        const bool inflated = inflator_.inflate(
+            inflation_samples, directions, grid_map_->getResolution(),
+            [this](const Eigen::Vector3d &point) {
+              if (!grid_map_->isInInflatedMap(point))
+              {
+                return DirectionalInflator::SpaceState::OUTSIDE_MAP;
+              }
+              return grid_map_->getInflateOccupancy(point) != 0
+                         ? DirectionalInflator::SpaceState::OCCUPIED
+                         : DirectionalInflator::SpaceState::FREE;
+            },
+            candidate, failure_reason);
+        candidate.metrics.seed_containment_evaluated = true;
+        candidate.metrics.seed_containment_max_violation_m = 0.0;
+        for (const Eigen::Vector3d &sample : inflation_samples)
+        {
+          candidate.metrics.seed_containment_max_violation_m = std::max(
+              candidate.metrics.seed_containment_max_violation_m,
+              maxNormalizedHalfspaceViolation(candidate.hpoly, sample));
+        }
+        candidate.metrics.seed_contained =
+            inflated &&
+            candidate.metrics.seed_containment_max_violation_m <= 1.0e-6;
+        return inflated;
+      };
 
   FailureReason failure_reason = FailureReason::NONE;
-  const bool inflated = inflator_.inflate(
-      samples, directions, grid_map_->getResolution(),
-      [this](const Eigen::Vector3d &point) {
-        if (!grid_map_->isInInflatedMap(point))
-        {
-          return DirectionalInflator::SpaceState::OUTSIDE_MAP;
-        }
-        return grid_map_->getInflateOccupancy(point) != 0
-                   ? DirectionalInflator::SpaceState::OCCUPIED
-                   : DirectionalInflator::SpaceState::FREE;
-      },
-      candidate, failure_reason);
+  bool inflated = inflate_candidate(trajectory_samples, failure_reason);
+  result.primary_failure_reason = failureReasonName(failure_reason);
+  const bool retryable_with_seed =
+      failure_reason == FailureReason::INITIAL_OBB_OCCUPIED ||
+      failure_reason == FailureReason::OBSTACLE_SEPARATION_FAILURE ||
+      failure_reason == FailureReason::FACE_BUDGET_EXHAUSTED;
+  if (!inflated && parameters_.trajectory_repair_seed_fallback_enabled &&
+      retryable_with_seed && piece_id + 1 < static_cast<int>(seed_path.size()) &&
+      seed_path[piece_id].allFinite() && seed_path[piece_id + 1].allFinite())
+  {
+    result.seed_fallback_used = true;
+    result.sample_source = "collision_free_seed";
+    const PointVector seed_samples =
+        sampleSegment(seed_path[piece_id], seed_path[piece_id + 1]);
+    failure_reason = FailureReason::NONE;
+    inflated = inflate_candidate(seed_samples, failure_reason);
+  }
   result.generation_time_ms = std::chrono::duration<double, std::milli>(
                                   std::chrono::steady_clock::now() - started)
                                   .count();
@@ -844,8 +879,11 @@ bool TfSfcManager::repairWorstCorridorForTrajectory(
   result.candidate_face_count = candidate.metrics.face_count;
   if (!inflated)
   {
-    result.reason = std::string("inflation_") +
-                    failureReasonName(failure_reason);
+    result.reason = result.seed_fallback_used
+                        ? std::string("seed_inflation_") +
+                              failureReasonName(failure_reason)
+                        : std::string("trajectory_inflation_") +
+                              failureReasonName(failure_reason);
     return false;
   }
   if (candidate.hpoly.rows() > parameters_.max_faces)
