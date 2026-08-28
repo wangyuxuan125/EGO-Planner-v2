@@ -1,6 +1,9 @@
 #include "optimizer/poly_traj_optimizer.h"
 
+#include <Eigen/Eigenvalues>
+
 #include <array>
+#include <chrono>
 #include <queue>
 
 #ifdef TF_SFC_WITH_DECOMP_ROS
@@ -1492,6 +1495,15 @@ namespace ego_planner
     double optimizer_time_ms = 0.0;
     double tf_sfc_generation_ms = 0.0;
     double tf_sfc_inflation_ms = 0.0;
+    bool objective_compliance_attempted = false;
+    bool objective_compliance_success = false;
+    int objective_compliance_evaluation_count = 0;
+    int objective_compliance_regularized_eigenvalue_count = 0;
+    double objective_compliance_ms = 0.0;
+    double objective_compliance_raw_min_eigenvalue = 0.0;
+    double objective_compliance_raw_max_eigenvalue = 0.0;
+    double objective_compliance_regularized_condition_number = 0.0;
+    std::string objective_compliance_reason = "not_requested";
     int total_lbfgs_iterations = 0;
     int last_lbfgs_result = 0;
     int corridor_enforcement_passes = 0;
@@ -1592,6 +1604,25 @@ namespace ego_planner
               corridor_generation_attempted;
           record.direction_fallback_allowed =
               tf_sfc_parameters_.allow_direction_fallback;
+          record.objective_compliance_attempted =
+              objective_compliance_attempted;
+          record.objective_compliance_success =
+              objective_compliance_success;
+          record.objective_compliance_spatial_variable_count =
+              3 * std::max(piece_num_ - 1, 0);
+          record.objective_compliance_evaluation_count =
+              objective_compliance_evaluation_count;
+          record.objective_compliance_regularized_eigenvalue_count =
+              objective_compliance_regularized_eigenvalue_count;
+          record.objective_compliance_ms = objective_compliance_ms;
+          record.objective_compliance_raw_min_eigenvalue =
+              objective_compliance_raw_min_eigenvalue;
+          record.objective_compliance_raw_max_eigenvalue =
+              objective_compliance_raw_max_eigenvalue;
+          record.objective_compliance_regularized_condition_number =
+              objective_compliance_regularized_condition_number;
+          record.objective_compliance_reason =
+              objective_compliance_reason;
           record.direct_spatial_variable_count =
               3 * std::max(piece_num_ - 1, 0);
           record.used_direction_mode = -1;
@@ -1696,6 +1727,56 @@ namespace ego_planner
     {
       tf_sfc_manager_->setCorridorPenaltyScale(1.0);
     }
+    const auto prepareObjectiveCompliance =
+        [&](const Eigen::MatrixXd &inner_points,
+            const Eigen::VectorXd &durations) {
+          if (tf_sfc_parameters_.direction_mode !=
+              tf_sfc::DirectionMode::FULL_OBJECTIVE_COMPLIANCE)
+          {
+            return true;
+          }
+          objective_compliance_attempted = true;
+          std::vector<Eigen::Matrix3d,
+                      Eigen::aligned_allocator<Eigen::Matrix3d>>
+              compliances;
+          int evaluation_count = 0;
+          int regularized_eigenvalue_count = 0;
+          double raw_min_eigenvalue = 0.0;
+          double raw_max_eigenvalue = 0.0;
+          double regularized_condition_number = 0.0;
+          std::string reason;
+          const ros::WallTime metric_started = ros::WallTime::now();
+          objective_compliance_success =
+              computeFullObjectivePieceCompliances(
+                  inner_points, durations, compliances,
+                  evaluation_count, regularized_eigenvalue_count,
+                  raw_min_eigenvalue, raw_max_eigenvalue,
+                  regularized_condition_number, reason);
+          objective_compliance_evaluation_count += evaluation_count;
+          objective_compliance_regularized_eigenvalue_count +=
+              regularized_eigenvalue_count;
+          objective_compliance_raw_min_eigenvalue = raw_min_eigenvalue;
+          objective_compliance_raw_max_eigenvalue = raw_max_eigenvalue;
+          objective_compliance_regularized_condition_number =
+              regularized_condition_number;
+          objective_compliance_reason = reason;
+          objective_compliance_ms +=
+              (ros::WallTime::now() - metric_started).toSec() * 1000.0;
+          tf_sfc_manager_->setPieceObjectiveCompliances(
+              objective_compliance_success
+                  ? compliances
+                  : std::vector<
+                        Eigen::Matrix3d,
+                        Eigen::aligned_allocator<Eigen::Matrix3d>>());
+          if (!objective_compliance_success)
+          {
+            ROS_ERROR_THROTTLE(
+                1.0,
+                "TF-SFC full-objective compliance failed (%s).",
+                objective_compliance_reason.c_str());
+          }
+          return objective_compliance_success;
+        };
     if (tf_sfc_parameters_.enabled && tf_sfc_manager_)
     {
       // TF-SFC is frozen during one optimization request. The explicit fallback
@@ -1915,6 +1996,7 @@ namespace ego_planner
             guidedInnerPts.col(point_id - 1) = seed_path[point_id];
           }
           jerkOpt_.generate(guidedInnerPts, initT);
+          prepareObjectiveCompliance(guidedInnerPts, initT);
           const ros::WallTime inflation_started = ros::WallTime::now();
           corridor_generation_attempted = true;
           corridor_ok = tf_sfc_manager_->generateFromSeedPath(
@@ -2014,6 +2096,7 @@ namespace ego_planner
                     seed_path[point_id];
               }
               jerkOpt_.generate(guidedInnerPts, initT);
+              prepareObjectiveCompliance(guidedInnerPts, initT);
               tf_corridors_.clear();
               const ros::WallTime retry_inflation_started =
                   ros::WallTime::now();
@@ -4258,6 +4341,244 @@ namespace ego_planner
   }
 
   /* callbacks by the L-BFGS optimizer */
+  bool PolyTrajOptimizer::evaluatePreCorridorSpatialObjective(
+      const Eigen::MatrixXd &inner_points,
+      const Eigen::VectorXd &durations,
+      Eigen::MatrixXd &gradient,
+      double &cost)
+  {
+    if (inner_points.rows() != 3 ||
+        inner_points.cols() != piece_num_ - 1 ||
+        durations.size() != piece_num_ || !inner_points.allFinite() ||
+        !durations.allFinite() || (durations.array() <= 0.0).any() ||
+        cps_num_prePiece_ < 2)
+    {
+      return false;
+    }
+
+    std::fill(min_ellip_dist2_.begin(), min_ellip_dist2_.end(),
+              std::numeric_limits<double>::max());
+    jerkOpt_.generate(inner_points, durations);
+    Eigen::VectorXd gradient_time = Eigen::VectorXd::Zero(piece_num_);
+    Eigen::VectorXd component_costs = Eigen::VectorXd::Zero(5);
+    double smoothness_cost = 0.0;
+    initAndGetSmoothnessGradCost2PT(gradient_time, smoothness_cost);
+    addPVAJGradCost2CT(gradient_time, component_costs,
+                       cps_num_prePiece_);
+    gradient.resize(3, piece_num_ - 1);
+    jerkOpt_.getGrad2TP(gradient_time, gradient);
+    cost = smoothness_cost + component_costs.sum() +
+           wei_time_ * durations.sum();
+    return gradient.allFinite() && std::isfinite(cost);
+  }
+
+  bool PolyTrajOptimizer::computeFullObjectivePieceCompliances(
+      const Eigen::MatrixXd &inner_points,
+      const Eigen::VectorXd &durations,
+      std::vector<Eigen::Matrix3d,
+                  Eigen::aligned_allocator<Eigen::Matrix3d>> &compliances,
+      int &evaluation_count,
+      int &regularized_eigenvalue_count,
+      double &raw_min_eigenvalue,
+      double &raw_max_eigenvalue,
+      double &regularized_condition_number,
+      std::string &reason)
+  {
+    compliances.clear();
+    evaluation_count = 0;
+    regularized_eigenvalue_count = 0;
+    raw_min_eigenvalue = 0.0;
+    raw_max_eigenvalue = 0.0;
+    regularized_condition_number = 0.0;
+    reason = "invalid_input";
+    const int spatial_dimension = static_cast<int>(inner_points.size());
+    if (inner_points.rows() != 3 ||
+        inner_points.cols() != piece_num_ - 1 ||
+        spatial_dimension <= 0 || durations.size() != piece_num_)
+    {
+      return false;
+    }
+
+    const double finite_difference_step =
+        tf_sfc_parameters_.objective_compliance_fd_step;
+    if (!std::isfinite(finite_difference_step) ||
+        finite_difference_step <= 0.0)
+    {
+      reason = "invalid_finite_difference_step";
+      return false;
+    }
+
+    Eigen::MatrixXd hessian(spatial_dimension, spatial_dimension);
+    std::vector<Eigen::MatrixXd> piece_position_jacobians(piece_num_);
+    for (Eigen::MatrixXd &jacobian : piece_position_jacobians)
+    {
+      jacobian = Eigen::MatrixXd::Zero(3, spatial_dimension);
+    }
+    const auto representativePiecePositions = [&]() {
+      Eigen::MatrixXd positions(3, piece_num_);
+      const poly_traj::Trajectory &trajectory = jerkOpt_.getTraj();
+      const int sample_intervals =
+          std::max(tf_sfc_parameters_.samples_per_piece, 2);
+      for (int piece_id = 0; piece_id < piece_num_; ++piece_id)
+      {
+        const poly_traj::Piece &piece = trajectory[piece_id];
+        Eigen::Vector3d weighted_position = Eigen::Vector3d::Zero();
+        double total_weight = 0.0;
+        for (int sample_id = 0; sample_id <= sample_intervals;
+             ++sample_id)
+        {
+          const double weight =
+              (sample_id == 0 || sample_id == sample_intervals)
+                  ? 0.5
+                  : 1.0;
+          weighted_position +=
+              weight * piece.getPos(
+                           piece.getDuration() *
+                           static_cast<double>(sample_id) /
+                           static_cast<double>(sample_intervals));
+          total_weight += weight;
+        }
+        positions.col(piece_id) = weighted_position / total_weight;
+      }
+      return positions;
+    };
+    Eigen::MatrixXd positive_points = inner_points;
+    Eigen::MatrixXd negative_points = inner_points;
+    for (int variable_id = 0; variable_id < spatial_dimension;
+         ++variable_id)
+    {
+      positive_points = inner_points;
+      negative_points = inner_points;
+      positive_points.data()[variable_id] += finite_difference_step;
+      negative_points.data()[variable_id] -= finite_difference_step;
+      Eigen::MatrixXd positive_gradient;
+      Eigen::MatrixXd negative_gradient;
+      double positive_cost = 0.0;
+      double negative_cost = 0.0;
+      const bool positive_ok = evaluatePreCorridorSpatialObjective(
+          positive_points, durations, positive_gradient, positive_cost);
+      ++evaluation_count;
+      Eigen::MatrixXd positive_piece_positions;
+      if (positive_ok)
+      {
+        positive_piece_positions = representativePiecePositions();
+      }
+      const bool negative_ok = evaluatePreCorridorSpatialObjective(
+          negative_points, durations, negative_gradient, negative_cost);
+      ++evaluation_count;
+      Eigen::MatrixXd negative_piece_positions;
+      if (negative_ok)
+      {
+        negative_piece_positions = representativePiecePositions();
+      }
+      if (!positive_ok || !negative_ok ||
+          positive_gradient.size() != spatial_dimension ||
+          negative_gradient.size() != spatial_dimension)
+      {
+        reason = "nonfinite_perturbed_objective";
+        Eigen::MatrixXd restored_gradient;
+        double restored_cost = 0.0;
+        evaluatePreCorridorSpatialObjective(
+            inner_points, durations, restored_gradient, restored_cost);
+        ++evaluation_count;
+        return false;
+      }
+      hessian.col(variable_id) =
+          (Eigen::Map<const Eigen::VectorXd>(positive_gradient.data(),
+                                             spatial_dimension) -
+           Eigen::Map<const Eigen::VectorXd>(negative_gradient.data(),
+                                             spatial_dimension)) /
+          (2.0 * finite_difference_step);
+      for (int piece_id = 0; piece_id < piece_num_; ++piece_id)
+      {
+        piece_position_jacobians[piece_id].col(variable_id) =
+            (positive_piece_positions.col(piece_id) -
+             negative_piece_positions.col(piece_id)) /
+            (2.0 * finite_difference_step);
+      }
+    }
+
+    Eigen::MatrixXd restored_gradient;
+    double restored_cost = 0.0;
+    const bool restored = evaluatePreCorridorSpatialObjective(
+        inner_points, durations, restored_gradient, restored_cost);
+    ++evaluation_count;
+    if (!restored || !hessian.allFinite())
+    {
+      reason = "nonfinite_hessian";
+      return false;
+    }
+
+    hessian = 0.5 * (hessian + hessian.transpose());
+    Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> solver(hessian);
+    if (solver.info() != Eigen::Success ||
+        !solver.eigenvalues().allFinite())
+    {
+      reason = "hessian_eigendecomposition_failure";
+      return false;
+    }
+
+    const Eigen::VectorXd raw_eigenvalues = solver.eigenvalues();
+    raw_min_eigenvalue = raw_eigenvalues.minCoeff();
+    raw_max_eigenvalue = raw_eigenvalues.maxCoeff();
+    const double spectral_scale = std::max(
+        std::max(std::abs(raw_min_eigenvalue),
+                 std::abs(raw_max_eigenvalue)),
+        tf_sfc_parameters_.objective_compliance_absolute_floor);
+    const double eigenvalue_floor = std::max(
+        tf_sfc_parameters_.objective_compliance_absolute_floor,
+        tf_sfc_parameters_.objective_compliance_eigenvalue_floor_ratio *
+            spectral_scale);
+    Eigen::VectorXd regularized_eigenvalues = raw_eigenvalues;
+    for (int eigenvalue_id = 0;
+         eigenvalue_id < regularized_eigenvalues.size(); ++eigenvalue_id)
+    {
+      if (regularized_eigenvalues(eigenvalue_id) < eigenvalue_floor)
+      {
+        regularized_eigenvalues(eigenvalue_id) = eigenvalue_floor;
+        ++regularized_eigenvalue_count;
+      }
+    }
+    regularized_condition_number =
+        regularized_eigenvalues.maxCoeff() /
+        regularized_eigenvalues.minCoeff();
+    const Eigen::MatrixXd inverse_hessian =
+        solver.eigenvectors() *
+        regularized_eigenvalues.cwiseInverse().asDiagonal() *
+        solver.eigenvectors().transpose();
+    if (!inverse_hessian.allFinite())
+    {
+      reason = "nonfinite_inverse_hessian";
+      return false;
+    }
+
+    compliances.resize(piece_num_);
+    for (int piece_id = 0; piece_id < piece_num_; ++piece_id)
+    {
+      if (!piece_position_jacobians[piece_id].allFinite() ||
+          piece_position_jacobians[piece_id].norm() <= 1.0e-12)
+      {
+        reason = "piece_has_no_spatial_deformation_jacobian";
+        compliances.clear();
+        return false;
+      }
+      compliances[piece_id] =
+          piece_position_jacobians[piece_id] * inverse_hessian *
+          piece_position_jacobians[piece_id].transpose();
+      compliances[piece_id] =
+          0.5 * (compliances[piece_id] +
+                 compliances[piece_id].transpose());
+      if (!compliances[piece_id].allFinite())
+      {
+        reason = "nonfinite_piece_compliance";
+        compliances.clear();
+        return false;
+      }
+    }
+    reason = "accepted";
+    return true;
+  }
+
   double PolyTrajOptimizer::costFunctionCallback(void *func_data, const double *x, double *grad, const int n)
   {
     PolyTrajOptimizer *opt = reinterpret_cast<PolyTrajOptimizer *>(func_data);
@@ -5010,6 +5331,15 @@ namespace ego_planner
              tf_sfc_parameters_.max_target_axis_progress_drop, 0.25);
     nh.param("tf_sfc/max_target_overshoot",
              tf_sfc_parameters_.max_target_overshoot, 0.15);
+    nh.param("tf_sfc/objective_compliance_fd_step",
+             tf_sfc_parameters_.objective_compliance_fd_step, 0.02);
+    nh.param("tf_sfc/objective_compliance_eigenvalue_floor_ratio",
+             tf_sfc_parameters_
+                 .objective_compliance_eigenvalue_floor_ratio,
+             1.0e-4);
+    nh.param("tf_sfc/objective_compliance_absolute_floor",
+             tf_sfc_parameters_.objective_compliance_absolute_floor,
+             1.0e-6);
     if (tf_sfc_parameters_.seed_clearance_astar_time_limit <= 0.0)
     {
       ROS_WARN("tf_sfc/seed_clearance_astar_time_limit must be positive; "
@@ -5053,7 +5383,9 @@ namespace ego_planner
     nh.param("tf_sfc/direction_mode", direction_mode,
              static_cast<int>(tf_sfc::DirectionMode::PCA));
     if (direction_mode < static_cast<int>(tf_sfc::DirectionMode::FRENET) ||
-        direction_mode > static_cast<int>(tf_sfc::DirectionMode::SENSITIVITY))
+        direction_mode >
+            static_cast<int>(
+                tf_sfc::DirectionMode::FULL_OBJECTIVE_COMPLIANCE))
     {
       ROS_WARN("Invalid tf_sfc/direction_mode=%d; using PCA (1).", direction_mode);
       direction_mode = static_cast<int>(tf_sfc::DirectionMode::PCA);
@@ -5096,6 +5428,16 @@ namespace ego_planner
         std::max(tf_sfc_parameters_.max_target_axis_progress_drop, 0.0);
     tf_sfc_parameters_.max_target_overshoot =
         std::max(tf_sfc_parameters_.max_target_overshoot, 0.0);
+    tf_sfc_parameters_.objective_compliance_fd_step =
+        std::max(tf_sfc_parameters_.objective_compliance_fd_step, 1.0e-5);
+    tf_sfc_parameters_.objective_compliance_eigenvalue_floor_ratio =
+        std::max(
+            tf_sfc_parameters_
+                .objective_compliance_eigenvalue_floor_ratio,
+            1.0e-12);
+    tf_sfc_parameters_.objective_compliance_absolute_floor =
+        std::max(tf_sfc_parameters_.objective_compliance_absolute_floor,
+                 1.0e-12);
     tf_sfc_parameters_.weight = std::max(tf_sfc_parameters_.weight, 0.0);
     tf_sfc_parameters_.enforcement_weight_multiplier =
         std::max(tf_sfc_parameters_.enforcement_weight_multiplier, 1.0);
