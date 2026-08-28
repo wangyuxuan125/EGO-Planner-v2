@@ -101,9 +101,9 @@ roslaunch ego_planner single_drone_interactive.launch \
   tf_sfc_experiment_tag:=frenet_obb_hard_junction_v9
 ```
 
-方向模式为 `0=Frenet`、`1=PCA`、`2=Sensitivity Gramian`。当前分支尚未从完整 MINCO 局部目标自动构造各向异性的 per-piece Gramian；仅使用 jerk 二次型会在 xyz 上得到各向同性度量，不能冒充 trajectory-favorable sensitivity。PCA/Frenet 因此只能作为消融项。
+方向模式为 `0=Frenet`、`1=PCA`、`2=MINCO differential-state Gramian`。v24 的 mode 2 在每个实际 MINCO piece 上对速度、加速度和 jerk 的外积作无量纲加权积分，得到各向异性方向；如果调用方提供完整局部目标的外部 Gramian，则优先使用外部值。它是轨迹微分状态需求/易变形方向的可复现实用代理，不等同于完整环境与动力学目标 Hessian 的精确 sensitivity。
 
-正式 sensitivity 实验必须同时设置 `tf_sfc_direction_mode:=2 tf_sfc_allow_direction_fallback:=false`。在真实 Gramian 接入前，该配置应以 `direction_failure` 明确失败；若为了工程调试允许回退，则 v18 CSV 的 `used_direction_mode`、`direction_fallback_allowed`、`direction_fallback_count` 和 corridor 级 requested/used mode 会暴露该回退，数据不得计入主方法。
+正式 v24 主方法实验必须同时设置 `tf_sfc_direction_mode:=2 tf_sfc_allow_direction_fallback:=false`。corridor 表的 `direction_metric_source` 必须为 `minco_differential_state_gramian`（或以后明确记录的 `external_sensitivity_gramian`），且 `requested_direction_mode=used_direction_mode=2`。PCA/Frenet 只作为方向消融；任何 fallback 数据不得计入主方法。
 
 ### EGO + Liu et al. EllipsoidDecomp SFC
 
@@ -260,14 +260,14 @@ rostopic echo -n 1 /drone_0_ego_planner_node/tf_sfc/polyhedron_array
 默认输出：
 
 ```text
-$HOME/tf_sfc_results/ego/ego_runs_v18_drone_0.csv
-$HOME/tf_sfc_results/ego/ego_corridors_v18_drone_0.csv
+$HOME/tf_sfc_results/ego/ego_runs_v24_drone_0.csv
+$HOME/tf_sfc_results/ego/ego_corridors_v24_drone_0.csv
 ```
 
-- `ego_runs_v18_drone_<id>.csv`：每次优化候选调用一行。`planning_event_id` 标识一次重规划事件，`retry_index` 表示同一目标下连续失败后的重试序号，`attempt_id` 只表示多拓扑候选，三者不能混用。全局输入由 `commanded_goal_{x,y,z}_m` 记录，每次滚动规划实际使用的局部目标由 `planning_target_{x,y,z}_m` 记录；目标对比必须以前者分组。
+- `ego_runs_v24_drone_<id>.csv`：每次优化候选调用一行。`planning_event_id` 标识一次重规划事件，`retry_index` 表示同一目标下连续失败后的重试序号，`attempt_id` 只表示多拓扑候选，三者不能混用。全局输入由 `commanded_goal_{x,y,z}_m` 记录，每次滚动规划实际使用的局部目标由 `planning_target_{x,y,z}_m` 记录；目标对比必须以前者分组。
 - 搜索阶段单独记录 `astar_search_attempted/success/call_count/ms`、原始 A* 路径点数/长度、最终 seed 点数/长度、连续边有效性和局部地图覆盖率。v18 另以 `seed_frontend_evaluated`、`seed_frontend_success` 和 `corridor_generation_attempted` 区分前端失败与真正的 corridor 构造失败。`seed_path_build_ms` 包含搜索、视线简化和 piece 对齐；`corridor_inflation_ms` 单独记录区域生成调用；两者仍包含在 `corridor_generation_ms` 和 `total_planning_ms` 内。
 - v18 将启动期的局部地图问题进一步拆开：`allow_partial_corridors` 记录实际生效参数，`seed_start_in_map`/`seed_finish_in_map` 记录端点状态，`partial_target_search_attempted/found`、`partial_boundary_ratio` 和六个 `inflated_map_{low,high}_*` 字段记录滚动地图可用范围。若策略为 `partial_corridors_disabled`，修正启动参数；若为 `inflated_map_forward_extent_not_ready`，该样本属于传感器/地图预热失败，不得记作 PCA 或 corridor 几何失败。
-- `ego_corridors_v18_drone_<id>.csv`：每个轨迹分段一行，并记录 `inflation_candidate_evaluation_count`、`requested_direction_mode` 与 `used_direction_mode`。Run 表中的 `direct_spatial_variable_count`、`hard_spatial_variable_count`、`hard_spatial_variable_overhead_ratio` 和 `face_sample_pairs_per_evaluation` 用于核验“降低约束负担”的声明；若 ratio 大于 1，不得声称参数维数下降。EllipsoidDecomp 额外记录种子包含是否被评估、是否完整包含线段以及最大归一化半空间违反量。由于多面体是凸集，只要两个端点位于多面体内，整条线 seed 就位于多面体内。
+- `ego_corridors_v24_drone_<id>.csv`：每个轨迹分段一行，并记录 `inflation_candidate_evaluation_count`、方向来源/速度对齐、trajectory-weighted squared width、显式面代价和最终 region quality。Run 表中的 `direct_spatial_variable_count`、`hard_spatial_variable_count`、`hard_spatial_variable_overhead_ratio` 和 `face_sample_pairs_per_evaluation` 用于核验“降低约束负担”的声明；若 ratio 大于 1，不得声称参数维数下降。EllipsoidDecomp 额外记录种子包含是否被评估、是否完整包含线段以及最大归一化半空间违反量。由于多面体是凸集，只要两个端点位于多面体内，整条线 seed 就位于多面体内。
 - 最终安全失败继续拆分为 `obstacle_collision_failure`、`swarm_clearance_failure` 和走廊违反；硬连接点与采样曲线违反量保持独立。
 
 文件使用追加模式。不要在同一标签下混入不同地图或参数；每个场景应使用独立目录或唯一 `tf_sfc_experiment_tag`。
@@ -275,8 +275,8 @@ $HOME/tf_sfc_results/ego/ego_corridors_v18_drone_0.csv
 快速查看：
 
 ```bash
-head -n 5 $HOME/tf_sfc_results/ego/ego_runs_v18_drone_0.csv
-head -n 5 $HOME/tf_sfc_results/ego/ego_corridors_v18_drone_0.csv
+head -n 5 $HOME/tf_sfc_results/ego/ego_runs_v24_drone_0.csv
+head -n 5 $HOME/tf_sfc_results/ego/ego_corridors_v24_drone_0.csv
 ```
 
 ## 4. 当前可用于论文统计的字段
@@ -288,7 +288,7 @@ head -n 5 $HOME/tf_sfc_results/ego/ego_corridors_v18_drone_0.csv
 3. 轨迹后端：只在 `tf_sfc_generated=1` 条件下统计优化成功率、优化时间、轨迹时长/长度及约束违反。
 4. 完整系统：仍需要 FSM/仿真器的目标到达、超时和执行期碰撞记录；不能把单次 `success` 或“某个目标至少生成过一次轨迹”写成 mission success。
 
-`mean_weighted_width` 与 `min_overlap_radius` 是解释性几何指标。当前 MVP 尚未严谨提供 corridor volume、MVIE/Chebyshev radius、连续轨迹最小净空、真实 sensitivity Gramian、`alpha_max`、逐迭代 objective decrease 和严格 constraint count，不应以宽度代理冒充体积。
+`mean_weighted_width`、`region_quality_score` 与 `min_overlap_radius` 是解释性几何指标。v24 的 Gramian 是 MINCO differential-state proxy，weighted squared width 也不是 corridor volume；在接入完整局部目标 Hessian 与 MVIE/体积度量前，论文必须使用这两个准确名称，不能写成“精确 sensitivity”或“最大体积”。
 
 ## 5. 分层统计与 Wilson 置信区间
 
@@ -296,7 +296,9 @@ head -n 5 $HOME/tf_sfc_results/ego/ego_corridors_v18_drone_0.csv
 
 ```bash
 python3 tools/analyze_tf_sfc_v9.py \
-  $HOME/tf_sfc_results/ego/ego_runs_v18_drone_0.csv
+  $HOME/tf_sfc_results/ego/ego_runs_v24_drone_0.csv \
+  --corridors-csv \
+  $HOME/tf_sfc_results/ego/ego_corridors_v24_drone_0.csv
 ```
 
 输出中的 `optimizer-call success` 仅为诊断项；论文主表应优先使用独立场景/目标上的系统结果、固定 seed 输入的走廊结果，以及有效走廊条件下的后端结果。工具给出的 “goals with >=1 successful plan” 也不是目标到达率。
@@ -687,3 +689,67 @@ more than 0.05 m regression along the fixed commanded start-to-goal axis. Also
 require mission arrival, no face above 12, no accepted overlap below 0.02 m,
 zero sampled final violation on successful calls and no material P90 latency
 increase relative to v21.
+
+## EGO schema-v24: MINCO-aware face quality and bounded progress guard
+
+The v23 run is substantially more stable than v22, but two successful calls
+are still followed by more than 0.05 m reverse progress. One is a genuine
+initial regression and one is an oscillation after passing the commanded goal;
+neither call accepted a corridor repair. v24 therefore does not reopen the
+aggressive v22 repair path. It adds two bounded mechanisms aligned with the
+paper's main claim:
+
+1. mode 2 automatically derives a per-piece differential-state Gramian from
+   the actual MINCO velocity, acceleration and jerk, and records its source and
+   alignment with velocity;
+2. inflation selects among the largest feasible expansion and two bounded
+   smaller candidates using
+   `utility.dot(width^2) - face_quality_weight * face_count`;
+3. `max_faces=12` and `min_overlap_radius=0.02 m` remain hard gates rather
+   than soft terms in that score;
+4. after collision checking, a sampled progress guard rejects an initial move
+   opposite the certified seed, a large target-axis return, or excessive local
+   target overshoot. It does not replace the external closed-loop regression
+   and mission-arrival measurements.
+
+First v24 regression:
+
+```bash
+roslaunch ego_planner single_drone_interactive.launch \
+  map_seed:=42 \
+  tf_sfc_enabled:=true \
+  tf_sfc_corridor_method:=tf_sfc \
+  tf_sfc_direction_mode:=2 \
+  tf_sfc_allow_direction_fallback:=false \
+  tf_sfc_max_faces:=12 \
+  tf_sfc_min_overlap_radius:=0.02 \
+  tf_sfc_face_quality_weight:=0.20 \
+  tf_sfc_progress_guard_enabled:=true \
+  tf_sfc_progress_guard_horizon_s:=1.0 \
+  tf_sfc_max_initial_progress_regression:=0.05 \
+  tf_sfc_max_target_axis_progress_drop:=0.25 \
+  tf_sfc_max_target_overshoot:=0.15 \
+  tf_sfc_allow_partial_corridors:=true \
+  tf_sfc_allow_ego_fallback:=false \
+  tf_sfc_hard_corridor_parameterization:=true \
+  tf_sfc_trajectory_repair_enabled:=true \
+  tf_sfc_trajectory_repair_seed_fallback_enabled:=true \
+  tf_sfc_trajectory_repair_seed_geometric_acceptance_enabled:=false \
+  tf_sfc_post_optimization_repair_enabled:=false \
+  tf_sfc_experiment_tag:=minco_tf_sfc_v24_face_quality_progress
+```
+
+Use a small pre-registered ablation rather than tuning on every failed call:
+
+- direction: modes 0/1/2 with face weight fixed and fallback disabled for
+  mode 2;
+- face trade-off: weights 0.00/0.10/0.20/0.40 with mode 2;
+- guard diagnosis: the selected configuration once with the guard disabled;
+- baselines: original EGO, Liu/DecompUtil and GCOPTER with identical maps,
+  goals, dynamics and time limits.
+
+The real-time claim is limited to fewer retained half-space faces and therefore
+fewer face-sample evaluations. Hard vertex-hull parameterization can use more
+spatial variables than direct junction coordinates; v24 logs both counts and
+must not be described as reducing decision-variable dimension unless the data
+actually show it.
