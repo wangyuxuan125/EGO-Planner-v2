@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <limits>
 #include <numeric>
 #include <vector>
 
@@ -223,6 +224,14 @@ bool DirectionalInflator::inflate(const PointVector &samples,
   const double step = std::max(parameters_.inflation_step, map_resolution);
   const int max_expansion_steps = static_cast<int>(std::floor(
       (parameters_.max_inflation_distance + 1.0e-9) / step));
+  const auto regionQuality = [&](const Eigen::Vector3d &candidate_lower,
+                                 const Eigen::Vector3d &candidate_upper,
+                                 const int face_count) {
+    const Eigen::Vector3d widths = candidate_upper - candidate_lower;
+    return directions.utility.dot(widths.array().square().matrix()) -
+           parameters_.face_quality_weight *
+               static_cast<double>(face_count);
+  };
   for (const int axis : axis_order)
   {
     for (int side = 0; side < 2; ++side)
@@ -235,9 +244,10 @@ bool DirectionalInflator::inflate(const PointVector &samples,
       const Eigen::Vector3d base_lower = lower;
       const Eigen::Vector3d base_upper = upper;
       int best_steps = 0;
+      int largest_feasible_steps = 0;
       Eigen::Vector3d best_lower = lower;
       Eigen::Vector3d best_upper = upper;
-      HPoly best_hpoly;
+      HPoly best_hpoly = accepted_hpoly;
       int best_obstacle_faces = accepted_obstacle_faces;
       int best_obstacle_points = accepted_obstacle_points;
       bool best_budget_saturated = accepted_budget_saturated;
@@ -247,8 +257,18 @@ bool DirectionalInflator::inflate(const PointVector &samples,
           accepted_separation_failure_sample_id;
       bool best_separation_failure_at_endpoint =
           accepted_separation_failure_at_endpoint;
+      double best_quality = regionQuality(
+          best_lower, best_upper, accepted_hpoly.rows());
+      std::vector<int> evaluated_steps;
 
       const auto evaluateExpansion = [&](const int expansion_steps) {
+        if (expansion_steps <= 0 ||
+            std::find(evaluated_steps.begin(), evaluated_steps.end(),
+                      expansion_steps) != evaluated_steps.end())
+        {
+          return expansion_steps <= largest_feasible_steps;
+        }
+        evaluated_steps.push_back(expansion_steps);
         Eigen::Vector3d candidate_lower = base_lower;
         Eigen::Vector3d candidate_upper = base_upper;
         const double expansion =
@@ -286,19 +306,31 @@ bool DirectionalInflator::inflate(const PointVector &samples,
           return false;
         }
 
-        best_steps = expansion_steps;
-        best_lower = candidate_lower;
-        best_upper = candidate_upper;
-        best_hpoly = candidate_hpoly;
-        best_obstacle_faces = candidate_obstacle_faces;
-        best_obstacle_points = candidate_obstacle_points;
-        best_budget_saturated = candidate_budget_saturated;
-        best_min_obstacle_sample_distance_m =
-            candidate_min_obstacle_sample_distance_m;
-        best_separation_failure_sample_id =
-            candidate_separation_failure_sample_id;
-        best_separation_failure_at_endpoint =
-            candidate_separation_failure_at_endpoint;
+        largest_feasible_steps =
+            std::max(largest_feasible_steps, expansion_steps);
+        const double candidate_quality = regionQuality(
+            candidate_lower, candidate_upper, candidate_hpoly.rows());
+        const bool better_quality = candidate_quality > best_quality + 1.0e-9;
+        const bool equal_quality_fewer_faces =
+            std::abs(candidate_quality - best_quality) <= 1.0e-9 &&
+            candidate_hpoly.rows() < best_hpoly.rows();
+        if (better_quality || equal_quality_fewer_faces)
+        {
+          best_quality = candidate_quality;
+          best_steps = expansion_steps;
+          best_lower = candidate_lower;
+          best_upper = candidate_upper;
+          best_hpoly = candidate_hpoly;
+          best_obstacle_faces = candidate_obstacle_faces;
+          best_obstacle_points = candidate_obstacle_points;
+          best_budget_saturated = candidate_budget_saturated;
+          best_min_obstacle_sample_distance_m =
+              candidate_min_obstacle_sample_distance_m;
+          best_separation_failure_sample_id =
+              candidate_separation_failure_sample_id;
+          best_separation_failure_at_endpoint =
+              candidate_separation_failure_at_endpoint;
+        }
         return true;
       };
 
@@ -309,7 +341,7 @@ bool DirectionalInflator::inflate(const PointVector &samples,
       // sorts while retaining the largest feasible discrete expansion.
       if (!evaluateExpansion(max_expansion_steps))
       {
-        int feasible_steps = 0;
+        int feasible_steps = largest_feasible_steps;
         int infeasible_steps = max_expansion_steps;
         while (infeasible_steps - feasible_steps > 1)
         {
@@ -324,6 +356,19 @@ bool DirectionalInflator::inflate(const PointVector &samples,
             infeasible_steps = trial_steps;
           }
         }
+      }
+
+      // The largest feasible box is not necessarily the best region once the
+      // number of retained faces is part of region quality. Probe two bounded
+      // smaller alternatives; this adds at most two candidate evaluations per
+      // side and avoids an unbounded combinatorial search.
+      if (largest_feasible_steps > 1)
+      {
+        evaluateExpansion(std::max(1, largest_feasible_steps / 2));
+      }
+      if (largest_feasible_steps > 3)
+      {
+        evaluateExpansion(std::max(1, largest_feasible_steps / 4));
       }
 
       if (best_steps > 0)
@@ -361,6 +406,9 @@ bool DirectionalInflator::inflate(const PointVector &samples,
   corridor.metrics.separation_failure_at_endpoint =
       accepted_separation_failure_at_endpoint;
   corridor.metrics.direction_fallback = directions.used_fallback;
+  corridor.metrics.direction_metric_source = directions.metric_source;
+  corridor.metrics.direction_velocity_alignment_cosine =
+      directions.velocity_alignment_cosine;
   corridor.metrics.valid = true;
 
   double min_slack = std::numeric_limits<double>::infinity();
@@ -375,6 +423,12 @@ bool DirectionalInflator::inflate(const PointVector &samples,
   const Eigen::Vector3d widths = upper - lower;
   corridor.metrics.weighted_width =
       directions.utility.dot(widths.array().square().matrix());
+  corridor.metrics.face_quality_penalty =
+      parameters_.face_quality_weight *
+      static_cast<double>(corridor.metrics.face_count);
+  corridor.metrics.region_quality_score =
+      corridor.metrics.weighted_width -
+      corridor.metrics.face_quality_penalty;
   return true;
 }
 
