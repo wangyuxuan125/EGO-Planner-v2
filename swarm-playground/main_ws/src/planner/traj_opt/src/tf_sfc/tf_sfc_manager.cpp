@@ -1010,6 +1010,13 @@ void TfSfcManager::setPieceSensitivityGramians(
   sensitivity_provider_.setPieceGramians(gramians);
 }
 
+void TfSfcManager::setPieceObjectiveCompliances(
+    const std::vector<Eigen::Matrix3d,
+                      Eigen::aligned_allocator<Eigen::Matrix3d>> &compliances)
+{
+  objective_compliance_provider_.setPieceCompliances(compliances);
+}
+
 bool TfSfcManager::computeDirections(const poly_traj::Piece &piece,
                                      const PointVector &samples,
                                      const int piece_id,
@@ -1024,6 +1031,11 @@ bool TfSfcManager::computeDirections(const poly_traj::Piece &piece,
   else if (parameters_.direction_mode == DirectionMode::SENSITIVITY)
   {
     requested = &sensitivity_provider_;
+  }
+  else if (parameters_.direction_mode ==
+           DirectionMode::FULL_OBJECTIVE_COMPLIANCE)
+  {
+    requested = &objective_compliance_provider_;
   }
 
   if (requested->computeDirections(piece, samples, piece_id, directions))
@@ -1044,6 +1056,13 @@ bool TfSfcManager::computeDirections(const poly_traj::Piece &piece,
   if (parameters_.direction_mode == DirectionMode::SENSITIVITY)
   {
     ROS_WARN_THROTTLE(1.0, "TF-SFC sensitivity Gramian unavailable; falling back to PCA directions.");
+  }
+  else if (parameters_.direction_mode ==
+           DirectionMode::FULL_OBJECTIVE_COMPLIANCE)
+  {
+    ROS_WARN_THROTTLE(
+        1.0,
+        "TF-SFC full-objective compliance unavailable; falling back to PCA directions.");
   }
   if (pca_provider_.computeDirections(piece, samples, piece_id, directions))
   {
