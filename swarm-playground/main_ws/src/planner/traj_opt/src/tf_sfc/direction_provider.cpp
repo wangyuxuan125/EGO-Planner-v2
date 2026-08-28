@@ -56,6 +56,60 @@ void orientPrimaryWithTrajectory(const poly_traj::Piece &piece, Eigen::Matrix3d 
   }
 }
 
+double velocityAlignmentCosine(const poly_traj::Piece &piece,
+                               const Eigen::Matrix3d &frame)
+{
+  Eigen::Vector3d velocity = piece.getVel(0.5 * piece.getDuration());
+  if (velocity.norm() < kDirectionEpsilon)
+  {
+    velocity = piece.getPos(piece.getDuration()) - piece.getPos(0.0);
+  }
+  return velocity.norm() < kDirectionEpsilon
+             ? 0.0
+             : std::abs(frame.col(0).dot(velocity.normalized()));
+}
+
+Eigen::Matrix3d mincoDifferentialStateGramian(
+    const poly_traj::Piece &piece)
+{
+  constexpr int kSamples = 8;
+  constexpr double kVelocityWeight = 0.55;
+  constexpr double kAccelerationWeight = 0.30;
+  constexpr double kJerkWeight = 0.15;
+  const double duration = std::max(piece.getDuration(), 1.0e-3);
+  double length_scale =
+      (piece.getPos(duration) - piece.getPos(0.0)).norm();
+  for (int sample_id = 0; sample_id < kSamples; ++sample_id)
+  {
+    const double time = duration *
+                        (static_cast<double>(sample_id) + 0.5) /
+                        static_cast<double>(kSamples);
+    length_scale += duration * piece.getVel(time).norm() /
+                    static_cast<double>(kSamples);
+  }
+  length_scale = std::max(0.5 * length_scale, 1.0e-3);
+
+  Eigen::Matrix3d gramian = 1.0e-6 * Eigen::Matrix3d::Identity();
+  for (int sample_id = 0; sample_id < kSamples; ++sample_id)
+  {
+    const double time = duration *
+                        (static_cast<double>(sample_id) + 0.5) /
+                        static_cast<double>(kSamples);
+    const Eigen::Vector3d velocity =
+        duration * piece.getVel(time) / length_scale;
+    const Eigen::Vector3d acceleration =
+        duration * duration * piece.getAcc(time) / length_scale;
+    const Eigen::Vector3d jerk =
+        duration * duration * duration * piece.getJer(time) / length_scale;
+    gramian.noalias() +=
+        (kVelocityWeight * velocity * velocity.transpose() +
+         kAccelerationWeight * acceleration * acceleration.transpose() +
+         kJerkWeight * jerk * jerk.transpose()) /
+        static_cast<double>(kSamples);
+  }
+  return gramian;
+}
+
 bool eigendirectionsDescending(const Eigen::Matrix3d &matrix,
                                Eigen::Matrix3d &frame,
                                Eigen::Vector3d &values)
@@ -100,6 +154,9 @@ bool FrenetDirectionProvider::computeDirections(const poly_traj::Piece &piece,
     return false;
   }
   directions.utility = Eigen::Vector3d(1.0, 0.5, 0.5);
+  directions.metric_source = "frenet_velocity";
+  directions.velocity_alignment_cosine =
+      velocityAlignmentCosine(piece, directions.frame);
   directions.used_mode = DirectionMode::FRENET;
   return true;
 }
@@ -136,6 +193,9 @@ bool PcaDirectionProvider::computeDirections(const poly_traj::Piece &piece,
   }
   orientPrimaryWithTrajectory(piece, directions.frame);
   directions.utility /= directions.utility.maxCoeff();
+  directions.metric_source = "trajectory_pca";
+  directions.velocity_alignment_cosine =
+      velocityAlignmentCosine(piece, directions.frame);
   directions.used_mode = DirectionMode::PCA;
   return true;
 }
@@ -152,18 +212,31 @@ bool SensitivityDirectionProvider::computeDirections(const poly_traj::Piece &pie
                                                      DirectionSet &directions) const
 {
   (void)samples;
-  if (piece_id < 0 || piece_id >= static_cast<int>(gramians_.size()))
+  Eigen::Matrix3d gramian;
+  const bool external_gramian =
+      piece_id >= 0 && piece_id < static_cast<int>(gramians_.size()) &&
+      gramians_[piece_id].allFinite();
+  if (external_gramian)
   {
-    return false;
+    gramian = gramians_[piece_id];
   }
-
-  if (!gramians_[piece_id].allFinite() ||
-      !eigendirectionsDescending(gramians_[piece_id], directions.frame, directions.utility))
+  else
+  {
+    gramian = mincoDifferentialStateGramian(piece);
+  }
+  if (!gramian.allFinite() ||
+      !eigendirectionsDescending(gramian, directions.frame,
+                                 directions.utility))
   {
     return false;
   }
   orientPrimaryWithTrajectory(piece, directions.frame);
   directions.utility /= directions.utility.maxCoeff();
+  directions.metric_source = external_gramian
+                                 ? "external_sensitivity_gramian"
+                                 : "minco_differential_state_gramian";
+  directions.velocity_alignment_cosine =
+      velocityAlignmentCosine(piece, directions.frame);
   directions.used_mode = DirectionMode::SENSITIVITY;
   return true;
 }
