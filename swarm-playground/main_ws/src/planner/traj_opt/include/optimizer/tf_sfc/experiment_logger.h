@@ -147,6 +147,13 @@ struct ExperimentRunRecord
   double corridor_penalty_weight_initial = 0.0;
   double corridor_penalty_weight_final = 0.0;
   bool strict_corridor_rejected = false;
+  bool progress_guard_enabled = false;
+  bool progress_guard_evaluated = false;
+  bool progress_guard_passed = true;
+  double min_initial_seed_progress_m = 0.0;
+  double max_target_axis_progress_drop_m = 0.0;
+  double max_target_overshoot_m = 0.0;
+  std::string progress_guard_reason = "not_evaluated";
   bool trajectory_repair_enabled = false;
   int trajectory_repair_attempt_count = 0;
   int trajectory_repair_accept_count = 0;
