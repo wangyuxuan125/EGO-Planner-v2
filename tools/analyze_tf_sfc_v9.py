@@ -143,6 +143,9 @@ def summarize_corridors(tag, rows):
     candidate_evaluations = finite_column(
         valid_rows, "inflation_candidate_evaluation_count"
     )
+    metric_condition = finite_column(
+        valid_rows, "direction_metric_condition_number"
+    )
     sources = Counter(row.get("direction_metric_source", "unknown")
                       for row in valid_rows)
     print(
@@ -159,6 +162,7 @@ def summarize_corridors(tag, rows):
     print(
         f"direction evidence [{tag}]: sources={dict(sources)}; "
         f"velocity-alignment median={percentile(alignment, 0.5):.3f}; "
+        f"metric-condition median={percentile(metric_condition, 0.5):.3f}; "
         f"inflation candidate evaluations p90="
         f"{percentile(candidate_evaluations, 0.9):.0f}"
     )
@@ -273,6 +277,38 @@ def summarize(tag, rows, progress_regression_threshold):
         print(f"progress guard acceptance: "
               f"{rate_text(progress_passes, len(progress_rows))}; "
               f"rejections={dict(progress_reasons)}")
+    if "objective_compliance_attempted" in rows[0]:
+        compliance_rows = [row for row in rows
+                           if as_bool(row, "objective_compliance_attempted")]
+        compliance_successes = sum(
+            as_bool(row, "objective_compliance_success")
+            for row in compliance_rows
+        )
+        compliance_ms = finite_column(
+            compliance_rows, "objective_compliance_ms"
+        )
+        compliance_evaluations = finite_column(
+            compliance_rows, "objective_compliance_evaluation_count"
+        )
+        compliance_regularized = finite_column(
+            compliance_rows,
+            "objective_compliance_regularized_eigenvalue_count",
+        )
+        compliance_failures = Counter(
+            row.get("objective_compliance_reason", "unknown")
+            for row in compliance_rows
+            if not as_bool(row, "objective_compliance_success")
+        )
+        print(
+            "full-objective compliance: "
+            f"{rate_text(compliance_successes, len(compliance_rows))}; "
+            f"ms median/p90={percentile(compliance_ms, 0.5):.3f}/"
+            f"{percentile(compliance_ms, 0.9):.3f}; "
+            f"evaluations median={percentile(compliance_evaluations, 0.5):.0f}; "
+            f"regularized eigenvalues median="
+            f"{percentile(compliance_regularized, 0.5):.0f}; "
+            f"failures={dict(compliance_failures)}"
+        )
     if "face_sample_pairs_per_evaluation" in rows[0]:
         face_sample_pairs = finite_column(
             successful_rows, "face_sample_pairs_per_evaluation"
@@ -315,7 +351,7 @@ def main():
     )
     parser.add_argument(
         "--corridors-csv",
-        help="optional matching schema-v24 corridor CSV",
+        help="optional matching schema-v24+ corridor CSV",
     )
     args = parser.parse_args()
 
