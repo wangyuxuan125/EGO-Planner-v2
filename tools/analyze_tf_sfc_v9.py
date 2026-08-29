@@ -4,8 +4,32 @@
 import argparse
 import csv
 import math
+import os
+import re
 import statistics
 from collections import Counter, defaultdict
+
+
+def validate_schema_provenance(path, rows, table_name):
+    """Reject silently relabelled logs before producing paper statistics."""
+    versions = set()
+    for row in rows:
+        try:
+            versions.add(int(float(row.get("schema_version", "nan"))))
+        except (TypeError, ValueError):
+            raise SystemExit(f"{table_name}: invalid schema_version")
+    if len(versions) != 1:
+        raise SystemExit(
+            f"{table_name}: mixed schema versions {sorted(versions)}"
+        )
+    version = next(iter(versions))
+    match = re.search(r"_v(\d+)_", os.path.basename(path))
+    if match and int(match.group(1)) != version:
+        raise SystemExit(
+            f"{table_name}: filename claims v{match.group(1)} but CSV "
+            f"contains schema v{version}; rebuild/source the intended binary"
+        )
+    return version
 
 
 def as_bool(row, key):
@@ -143,6 +167,18 @@ def summarize_corridors(tag, rows):
     candidate_evaluations = finite_column(
         valid_rows, "inflation_candidate_evaluation_count"
     )
+    metric_condition = finite_column(
+        valid_rows, "direction_metric_condition_number"
+    )
+    transport_weights = finite_column(
+        valid_rows, "direction_transport_conditioning_weight"
+    ) if "direction_transport_conditioning_weight" in valid_rows[0] else []
+    pruned_faces = finite_column(
+        valid_rows, "obstacle_face_prune_count"
+    ) if "obstacle_face_prune_count" in valid_rows[0] else []
+    subset_evaluations = finite_column(
+        valid_rows, "face_subset_evaluation_count"
+    ) if "face_subset_evaluation_count" in valid_rows[0] else []
     sources = Counter(row.get("direction_metric_source", "unknown")
                       for row in valid_rows)
     print(
@@ -159,9 +195,23 @@ def summarize_corridors(tag, rows):
     print(
         f"direction evidence [{tag}]: sources={dict(sources)}; "
         f"velocity-alignment median={percentile(alignment, 0.5):.3f}; "
+        f"metric-condition median={percentile(metric_condition, 0.5):.3f}; "
+        + (f"transport-weight median="
+           f"{percentile(transport_weights, 0.5):.3f}; "
+           if transport_weights else "") +
         f"inflation candidate evaluations p90="
         f"{percentile(candidate_evaluations, 0.9):.0f}"
     )
+    if pruned_faces:
+        print(
+            f"exact face-subset pruning [{tag}]: corridors with removals="
+            f"{sum(value > 0 for value in pruned_faces)}/{len(pruned_faces)}; "
+            f"removed total/median/p90={sum(pruned_faces):.0f}/"
+            f"{percentile(pruned_faces, 0.5):.0f}/"
+            f"{percentile(pruned_faces, 0.9):.0f}; "
+            f"subset evaluations p90="
+            f"{percentile(subset_evaluations, 0.9):.0f}"
+        )
 
 
 def summarize(tag, rows, progress_regression_threshold):
@@ -273,6 +323,38 @@ def summarize(tag, rows, progress_regression_threshold):
         print(f"progress guard acceptance: "
               f"{rate_text(progress_passes, len(progress_rows))}; "
               f"rejections={dict(progress_reasons)}")
+    if "objective_compliance_attempted" in rows[0]:
+        compliance_rows = [row for row in rows
+                           if as_bool(row, "objective_compliance_attempted")]
+        compliance_successes = sum(
+            as_bool(row, "objective_compliance_success")
+            for row in compliance_rows
+        )
+        compliance_ms = finite_column(
+            compliance_rows, "objective_compliance_ms"
+        )
+        compliance_evaluations = finite_column(
+            compliance_rows, "objective_compliance_evaluation_count"
+        )
+        compliance_regularized = finite_column(
+            compliance_rows,
+            "objective_compliance_regularized_eigenvalue_count",
+        )
+        compliance_failures = Counter(
+            row.get("objective_compliance_reason", "unknown")
+            for row in compliance_rows
+            if not as_bool(row, "objective_compliance_success")
+        )
+        print(
+            "full-objective compliance: "
+            f"{rate_text(compliance_successes, len(compliance_rows))}; "
+            f"ms median/p90={percentile(compliance_ms, 0.5):.3f}/"
+            f"{percentile(compliance_ms, 0.9):.3f}; "
+            f"evaluations median={percentile(compliance_evaluations, 0.5):.0f}; "
+            f"regularized eigenvalues median="
+            f"{percentile(compliance_regularized, 0.5):.0f}; "
+            f"failures={dict(compliance_failures)}"
+        )
     if "face_sample_pairs_per_evaluation" in rows[0]:
         face_sample_pairs = finite_column(
             successful_rows, "face_sample_pairs_per_evaluation"
@@ -315,7 +397,7 @@ def main():
     )
     parser.add_argument(
         "--corridors-csv",
-        help="optional matching schema-v24 corridor CSV",
+        help="optional matching schema-v24+ corridor CSV",
     )
     args = parser.parse_args()
 
@@ -325,6 +407,7 @@ def main():
         raise SystemExit("empty run CSV")
     if "planning_event_id" not in rows[0] or "retry_index" not in rows[0]:
         raise SystemExit("schema-v9+ CSV required")
+    run_schema = validate_schema_provenance(args.runs_csv, rows, "runs CSV")
     if args.max_progress_regression < 0.0:
         raise SystemExit("--max-progress-regression must be non-negative")
 
@@ -336,6 +419,46 @@ def main():
     if args.corridors_csv:
         with open(args.corridors_csv, newline="") as stream:
             corridor_rows = list(csv.DictReader(stream))
+        if not corridor_rows:
+            raise SystemExit("empty corridor CSV")
+        corridor_schema = validate_schema_provenance(
+            args.corridors_csv, corridor_rows, "corridors CSV"
+        )
+        if corridor_schema != run_schema:
+            raise SystemExit(
+                f"run/corridor schema mismatch: v{run_schema} versus "
+                f"v{corridor_schema}"
+            )
+        if corridor_schema >= 26:
+            required = "direction_transport_conditioning_weight"
+            if required not in corridor_rows[0]:
+                raise SystemExit(
+                    f"schema v{corridor_schema} corridor CSV lacks {required}"
+                )
+            invalid_mode3 = [
+                row for row in corridor_rows
+                if as_bool(row, "valid")
+                and int(float(row.get("used_direction_mode", "-1") or -1)) == 3
+                and row.get("direction_metric_source") !=
+                "minco_transport_conditioned_objective_compliance"
+            ]
+            if invalid_mode3:
+                raise SystemExit(
+                    f"schema v{corridor_schema}: {len(invalid_mode3)} valid "
+                    "mode-3 corridors lack transport-conditioned provenance"
+                )
+        if corridor_schema >= 27:
+            required_pruning = {
+                "obstacle_face_count_before_pruning",
+                "obstacle_face_prune_count",
+                "face_subset_evaluation_count",
+            }
+            missing_pruning = required_pruning.difference(corridor_rows[0])
+            if missing_pruning:
+                raise SystemExit(
+                    f"schema v{corridor_schema} corridor CSV lacks "
+                    f"{sorted(missing_pruning)}"
+                )
         corridor_groups = defaultdict(list)
         for row in corridor_rows:
             corridor_groups[row.get("experiment_tag", "unknown")].append(row)

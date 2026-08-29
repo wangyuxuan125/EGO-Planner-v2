@@ -4,6 +4,13 @@
     <arg name="map_size_z" value=" 3.0"/>
     <arg name="odom_topic" value="visual_slam/odom" />
     <arg name="map_seed" default="1"/>
+    <arg name="init_x" default="-15.0"/>
+    <arg name="init_y" default="-9.0"/>
+    <arg name="init_z" default="0.1"/>
+    <arg name="target0_x" default="15.0"/>
+    <arg name="target0_y" default="9.0"/>
+    <arg name="target0_z" default="1.0"/>
+    <arg name="flight_type" default="2"/>
     <arg name="tf_sfc_enabled" default="false"/>
     <arg name="tf_sfc_corridor_method" default="obb"/>
     <arg name="tf_sfc_max_faces" default="12"/>
@@ -56,11 +63,17 @@
     <arg name="tf_sfc_trajectory_repair_trigger" default="0.001"/>
     <arg name="tf_sfc_trajectory_repair_min_improvement" default="0.0001"/>
     <arg name="tf_sfc_face_quality_weight" default="0.20"/>
+    <arg name="tf_sfc_exact_face_subset_pruning_enabled" default="true"/>
     <arg name="tf_sfc_progress_guard_enabled" default="true"/>
     <arg name="tf_sfc_progress_guard_horizon_s" default="1.0"/>
     <arg name="tf_sfc_max_initial_progress_regression" default="0.05"/>
     <arg name="tf_sfc_max_target_axis_progress_drop" default="0.25"/>
     <arg name="tf_sfc_max_target_overshoot" default="0.15"/>
+    <arg name="tf_sfc_objective_compliance_fd_step" default="0.02"/>
+    <arg name="tf_sfc_objective_compliance_eigenvalue_floor_ratio" default="0.0001"/>
+    <arg name="tf_sfc_objective_compliance_absolute_floor" default="0.000001"/>
+    <arg name="tf_sfc_objective_compliance_transport_speed_reference" default="1.0"/>
+    <arg name="tf_sfc_objective_compliance_transport_weight_max" default="2.0"/>
 
     <!-- map -->
     <node pkg ="map_generator" name ="random_forest" type ="random_forest" output = "screen">
@@ -86,14 +99,17 @@
 
     <include file="$(find ego_planner)/launch/include/run_in_sim.xml">
         <arg name="drone_id" value="0"/>
-        <arg name="init_x" value="-15.0"/>
-        <arg name="init_y" value="0.0"/>
-        <arg name="init_z" value="1.0"/>
+        <arg name="init_x" value="$(arg init_x)"/>
+        <arg name="init_y" value="$(arg init_y)"/>
+        <arg name="init_z" value="$(arg init_z)"/>
         <arg name="map_size_x" value="$(arg map_size_x)"/>
         <arg name="map_size_y" value="$(arg map_size_y)"/>
         <arg name="map_size_z" value="$(arg map_size_z)"/>
         <arg name="odom_topic" value="$(arg odom_topic)"/>
-        <arg name="flight_type" value="1"/>
+        <arg name="flight_type" value="$(arg flight_type)"/>
+        <arg name="target0_x" value="$(arg target0_x)"/>
+        <arg name="target0_y" value="$(arg target0_y)"/>
+        <arg name="target0_z" value="$(arg target0_z)"/>
         <arg name="tf_sfc_enabled" value="$(arg tf_sfc_enabled)"/>
         <arg name="tf_sfc_corridor_method" value="$(arg tf_sfc_corridor_method)"/>
         <arg name="tf_sfc_max_faces" value="$(arg tf_sfc_max_faces)"/>
@@ -146,10 +162,16 @@
         <arg name="tf_sfc_trajectory_repair_trigger" value="$(arg tf_sfc_trajectory_repair_trigger)"/>
         <arg name="tf_sfc_trajectory_repair_min_improvement" value="$(arg tf_sfc_trajectory_repair_min_improvement)"/>
         <arg name="tf_sfc_face_quality_weight" value="$(arg tf_sfc_face_quality_weight)"/>
+        <arg name="tf_sfc_exact_face_subset_pruning_enabled" value="$(arg tf_sfc_exact_face_subset_pruning_enabled)"/>
         <arg name="tf_sfc_progress_guard_enabled" value="$(arg tf_sfc_progress_guard_enabled)"/>
         <arg name="tf_sfc_progress_guard_horizon_s" value="$(arg tf_sfc_progress_guard_horizon_s)"/>
         <arg name="tf_sfc_max_initial_progress_regression" value="$(arg tf_sfc_max_initial_progress_regression)"/>
         <arg name="tf_sfc_max_target_axis_progress_drop" value="$(arg tf_sfc_max_target_axis_progress_drop)"/>
         <arg name="tf_sfc_max_target_overshoot" value="$(arg tf_sfc_max_target_overshoot)"/>
+        <arg name="tf_sfc_objective_compliance_fd_step" value="$(arg tf_sfc_objective_compliance_fd_step)"/>
+        <arg name="tf_sfc_objective_compliance_eigenvalue_floor_ratio" value="$(arg tf_sfc_objective_compliance_eigenvalue_floor_ratio)"/>
+        <arg name="tf_sfc_objective_compliance_absolute_floor" value="$(arg tf_sfc_objective_compliance_absolute_floor)"/>
+        <arg name="tf_sfc_objective_compliance_transport_speed_reference" value="$(arg tf_sfc_objective_compliance_transport_speed_reference)"/>
+        <arg name="tf_sfc_objective_compliance_transport_weight_max" value="$(arg tf_sfc_objective_compliance_transport_weight_max)"/>
     </include>
 </launch>

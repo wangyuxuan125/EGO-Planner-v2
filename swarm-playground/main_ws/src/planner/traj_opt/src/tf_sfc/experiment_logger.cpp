@@ -44,7 +44,15 @@ const char *kRunHeader =
     "inflated_map_high_z_m,seed_frontend_evaluated,seed_frontend_success,"
     "corridor_generation_attempted,status,requested_method,method,"
     "tf_sfc_enabled,direction_mode,used_direction_mode,"
-    "direction_fallback_allowed,success,collision_free,tf_sfc_generated,"
+    "direction_fallback_allowed,objective_compliance_attempted,"
+    "objective_compliance_success,"
+    "objective_compliance_spatial_variable_count,"
+    "objective_compliance_evaluation_count,"
+    "objective_compliance_regularized_eigenvalue_count,"
+    "objective_compliance_ms,objective_compliance_raw_min_eigenvalue,"
+    "objective_compliance_raw_max_eigenvalue,"
+    "objective_compliance_regularized_condition_number,"
+    "objective_compliance_reason,success,collision_free,tf_sfc_generated,"
     "final_obstacle_collision,final_swarm_clearance_failure,terminal_failure_reason,"
     "fallback_to_ego,projection_applied,hard_parameterization_enabled,"
     "hard_parameterization_active,hard_constrained_junction_count,"
@@ -118,11 +126,16 @@ const char *kRunHeader =
 const char *kCorridorHeader =
     "schema_version,run_id,timestamp_s,experiment_tag,drone_id,piece_id,"
     "requested_method,method,"
-    "face_count,obstacle_face_count,obstacle_point_count,"
+    "face_count,obstacle_face_count,"
+    "obstacle_face_count_before_pruning,obstacle_face_prune_count,"
+    "face_subset_evaluation_count,obstacle_point_count,"
     "inflation_candidate_evaluation_count,face_budget_saturated,"
     "generation_time_ms,weighted_width,region_quality_score,"
     "face_quality_penalty,direction_metric_source,"
-    "direction_velocity_alignment_cosine,min_sample_slack,"
+    "direction_metric_eigenvalue_max,direction_metric_eigenvalue_mid,"
+    "direction_metric_eigenvalue_min,direction_metric_condition_number,"
+    "direction_velocity_alignment_cosine,"
+    "direction_transport_conditioning_weight,min_sample_slack,"
     "anchor_clearance_radius,"
     "min_obstacle_sample_distance_m,separation_failure_sample_id,"
     "separation_failure_at_endpoint,overlap_radius_to_next,"
@@ -208,7 +221,7 @@ bool ExperimentLogger::ensureDirectory() const
 
 bool ExperimentLogger::appendRun(const ExperimentRunRecord &record) const
 {
-  const std::string path = directory_ + "/ego_runs_v24_drone_" +
+  const std::string path = directory_ + "/ego_runs_v27_drone_" +
                            std::to_string(record.drone_id) + ".csv";
   const bool header = fileNeedsHeader(path);
   std::ofstream output(path, std::ios::out | std::ios::app);
@@ -221,7 +234,7 @@ bool ExperimentLogger::appendRun(const ExperimentRunRecord &record) const
     output << kRunHeader << '\n';
   }
   output << std::setprecision(17)
-         << 24 << ',' << csv(record.run_id) << ','
+         << 27 << ',' << csv(record.run_id) << ','
          << csv(record.planning_event_id) << ',' << record.timestamp_s << ','
          << csv(record.experiment_tag) << ',' << record.drone_id << ','
          << record.goal_id << ',' << record.replan_id << ','
@@ -279,7 +292,18 @@ bool ExperimentLogger::appendRun(const ExperimentRunRecord &record) const
          << csv(record.status) << ',' << csv(record.requested_method) << ','
          << csv(record.method) << ',' << record.tf_sfc_enabled << ','
          << record.direction_mode << ',' << record.used_direction_mode << ','
-         << record.direction_fallback_allowed << ',' << record.success << ','
+         << record.direction_fallback_allowed << ','
+         << record.objective_compliance_attempted << ','
+         << record.objective_compliance_success << ','
+         << record.objective_compliance_spatial_variable_count << ','
+         << record.objective_compliance_evaluation_count << ','
+         << record.objective_compliance_regularized_eigenvalue_count << ','
+         << record.objective_compliance_ms << ','
+         << record.objective_compliance_raw_min_eigenvalue << ','
+         << record.objective_compliance_raw_max_eigenvalue << ','
+         << record.objective_compliance_regularized_condition_number << ','
+         << csv(record.objective_compliance_reason) << ','
+         << record.success << ','
          << record.collision_free << ',' << record.tf_sfc_generated << ','
          << record.final_obstacle_collision << ','
          << record.final_swarm_clearance_failure << ','
@@ -391,7 +415,7 @@ bool ExperimentLogger::appendCorridors(const ExperimentRunRecord &record,
   {
     return true;
   }
-  const std::string path = directory_ + "/ego_corridors_v24_drone_" +
+  const std::string path = directory_ + "/ego_corridors_v27_drone_" +
                            std::to_string(record.drone_id) + ".csv";
   const bool header = fileNeedsHeader(path);
   std::ofstream output(path, std::ios::out | std::ios::app);
@@ -407,11 +431,14 @@ bool ExperimentLogger::appendCorridors(const ExperimentRunRecord &record,
   for (const Corridor &corridor : corridors)
   {
     const CorridorMetrics &metrics = corridor.metrics;
-    output << 24 << ',' << csv(record.run_id) << ',' << record.timestamp_s << ','
+    output << 27 << ',' << csv(record.run_id) << ',' << record.timestamp_s << ','
            << csv(record.experiment_tag) << ',' << record.drone_id << ','
            << metrics.piece_id << ',' << csv(record.requested_method) << ','
            << csv(record.method) << ',' << metrics.face_count << ','
            << metrics.obstacle_face_count << ','
+           << metrics.obstacle_face_count_before_pruning << ','
+           << metrics.obstacle_face_prune_count << ','
+           << metrics.face_subset_evaluation_count << ','
            << metrics.obstacle_point_count << ','
            << metrics.inflation_candidate_evaluation_count << ','
            << metrics.face_budget_saturated << ','
@@ -419,7 +446,12 @@ bool ExperimentLogger::appendCorridors(const ExperimentRunRecord &record,
            << metrics.region_quality_score << ','
            << metrics.face_quality_penalty << ','
            << csv(metrics.direction_metric_source) << ','
+           << metrics.direction_metric_eigenvalue_max << ','
+           << metrics.direction_metric_eigenvalue_mid << ','
+           << metrics.direction_metric_eigenvalue_min << ','
+           << metrics.direction_metric_condition_number << ','
            << metrics.direction_velocity_alignment_cosine << ','
+           << metrics.direction_transport_conditioning_weight << ','
            << metrics.min_sample_slack << ','
            << metrics.anchor_clearance_radius << ','
            << metrics.min_obstacle_sample_distance_m << ','

@@ -65,6 +65,10 @@ public:
   void setPieceSensitivityGramians(
       const std::vector<Eigen::Matrix3d, Eigen::aligned_allocator<Eigen::Matrix3d>> &gramians);
 
+  void setPieceObjectiveCompliances(
+      const std::vector<Eigen::Matrix3d,
+                        Eigen::aligned_allocator<Eigen::Matrix3d>> &compliances);
+
   const CorridorVector &corridors() const { return corridors_; }
   const Parameters &parameters() const { return parameters_; }
 
@@ -87,6 +91,7 @@ private:
   FrenetDirectionProvider frenet_provider_;
   PcaDirectionProvider pca_provider_;
   SensitivityDirectionProvider sensitivity_provider_;
+  FullObjectiveComplianceDirectionProvider objective_compliance_provider_;
   DirectionalInflator inflator_;
   CorridorVector corridors_;
   double corridor_penalty_scale_{1.0};

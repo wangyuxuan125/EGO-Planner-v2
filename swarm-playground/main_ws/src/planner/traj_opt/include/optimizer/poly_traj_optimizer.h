@@ -100,8 +100,8 @@ namespace ego_planner
     bool experiment_commanded_goal_valid_{false};
     struct MultitopologyData_t
     {
-      bool use_multitopology_trajs{false}; 
-      bool initial_obstacles_avoided{false}; 
+      bool use_multitopology_trajs{false};
+      bool initial_obstacles_avoided{false};
     }multitopology_data_;
 
     enum FORCE_STOP_OPTIMIZE_TYPE
@@ -123,6 +123,24 @@ namespace ego_planner
     double t_now_;
 
     void publishTfSfcCorridors(const tf_sfc::CorridorVector &corridors);
+
+    bool evaluatePreCorridorSpatialObjective(
+        const Eigen::MatrixXd &inner_points,
+        const Eigen::VectorXd &durations,
+        Eigen::MatrixXd &gradient,
+        double &cost);
+
+    bool computeFullObjectivePieceCompliances(
+        const Eigen::MatrixXd &inner_points,
+        const Eigen::VectorXd &durations,
+        std::vector<Eigen::Matrix3d,
+                    Eigen::aligned_allocator<Eigen::Matrix3d>> &compliances,
+        int &evaluation_count,
+        int &regularized_eigenvalue_count,
+        double &raw_min_eigenvalue,
+        double &raw_max_eigenvalue,
+        double &regularized_condition_number,
+        std::string &reason);
 
   public:
     PolyTrajOptimizer() {}

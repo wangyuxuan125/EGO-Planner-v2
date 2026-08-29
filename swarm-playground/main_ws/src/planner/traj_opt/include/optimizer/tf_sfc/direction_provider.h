@@ -59,6 +59,33 @@ private:
   std::vector<Eigen::Matrix3d, Eigen::aligned_allocator<Eigen::Matrix3d>> gramians_;
 };
 
+class FullObjectiveComplianceDirectionProvider final : public DirectionProvider
+{
+public:
+  DirectionMode mode() const override
+  {
+    return DirectionMode::FULL_OBJECTIVE_COMPLIANCE;
+  }
+
+  void setPieceCompliances(
+      const std::vector<Eigen::Matrix3d,
+                        Eigen::aligned_allocator<Eigen::Matrix3d>> &compliances);
+
+  void setTransportConditioning(double speed_reference,
+                                double maximum_weight);
+
+  bool computeDirections(const poly_traj::Piece &piece,
+                         const PointVector &samples,
+                         const int piece_id,
+                         DirectionSet &directions) const override;
+
+private:
+  std::vector<Eigen::Matrix3d,
+              Eigen::aligned_allocator<Eigen::Matrix3d>> compliances_;
+  double transport_speed_reference_{1.0};
+  double transport_weight_max_{2.0};
+};
+
 std::unique_ptr<DirectionProvider> makeDirectionProvider(DirectionMode mode);
 
 } // namespace tf_sfc

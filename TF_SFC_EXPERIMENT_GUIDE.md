@@ -101,7 +101,7 @@ roslaunch ego_planner single_drone_interactive.launch \
   tf_sfc_experiment_tag:=frenet_obb_hard_junction_v9
 ```
 
-方向模式为 `0=Frenet`、`1=PCA`、`2=MINCO differential-state Gramian`。v24 的 mode 2 在每个实际 MINCO piece 上对速度、加速度和 jerk 的外积作无量纲加权积分，得到各向异性方向；如果调用方提供完整局部目标的外部 Gramian，则优先使用外部值。它是轨迹微分状态需求/易变形方向的可复现实用代理，不等同于完整环境与动力学目标 Hessian 的精确 sensitivity。
+方向模式为 `0=Frenet`、`1=PCA`、`2=MINCO differential-state Gramian`、`3=fixed-duration full-objective MINCO compliance`。v24 的 mode 2 在每个实际 MINCO piece 上对速度、加速度和 jerk 的外积作无量纲加权积分，得到各向异性方向；如果调用方提供外部 Gramian，则优先使用外部值。它是轨迹微分状态需求/易变形方向的可复现实用代理，不等同于完整环境与动力学目标 Hessian 的精确 sensitivity。v25 mode 3 的定义与运行门限见文末独立章节。
 
 正式 v24 主方法实验必须同时设置 `tf_sfc_direction_mode:=2 tf_sfc_allow_direction_fallback:=false`。corridor 表的 `direction_metric_source` 必须为 `minco_differential_state_gramian`（或以后明确记录的 `external_sensitivity_gramian`），且 `requested_direction_mode=used_direction_mode=2`。PCA/Frenet 只作为方向消融；任何 fallback 数据不得计入主方法。
 
@@ -260,14 +260,14 @@ rostopic echo -n 1 /drone_0_ego_planner_node/tf_sfc/polyhedron_array
 默认输出：
 
 ```text
-$HOME/tf_sfc_results/ego/ego_runs_v24_drone_0.csv
-$HOME/tf_sfc_results/ego/ego_corridors_v24_drone_0.csv
+$HOME/tf_sfc_results/ego/ego_runs_v25_drone_0.csv
+$HOME/tf_sfc_results/ego/ego_corridors_v25_drone_0.csv
 ```
 
-- `ego_runs_v24_drone_<id>.csv`：每次优化候选调用一行。`planning_event_id` 标识一次重规划事件，`retry_index` 表示同一目标下连续失败后的重试序号，`attempt_id` 只表示多拓扑候选，三者不能混用。全局输入由 `commanded_goal_{x,y,z}_m` 记录，每次滚动规划实际使用的局部目标由 `planning_target_{x,y,z}_m` 记录；目标对比必须以前者分组。
+- `ego_runs_v25_drone_<id>.csv`：每次优化候选调用一行。`planning_event_id` 标识一次重规划事件，`retry_index` 表示同一目标下连续失败后的重试序号，`attempt_id` 只表示多拓扑候选，三者不能混用。全局输入由 `commanded_goal_{x,y,z}_m` 记录，每次滚动规划实际使用的局部目标由 `planning_target_{x,y,z}_m` 记录；目标对比必须以前者分组。
 - 搜索阶段单独记录 `astar_search_attempted/success/call_count/ms`、原始 A* 路径点数/长度、最终 seed 点数/长度、连续边有效性和局部地图覆盖率。v18 另以 `seed_frontend_evaluated`、`seed_frontend_success` 和 `corridor_generation_attempted` 区分前端失败与真正的 corridor 构造失败。`seed_path_build_ms` 包含搜索、视线简化和 piece 对齐；`corridor_inflation_ms` 单独记录区域生成调用；两者仍包含在 `corridor_generation_ms` 和 `total_planning_ms` 内。
 - v18 将启动期的局部地图问题进一步拆开：`allow_partial_corridors` 记录实际生效参数，`seed_start_in_map`/`seed_finish_in_map` 记录端点状态，`partial_target_search_attempted/found`、`partial_boundary_ratio` 和六个 `inflated_map_{low,high}_*` 字段记录滚动地图可用范围。若策略为 `partial_corridors_disabled`，修正启动参数；若为 `inflated_map_forward_extent_not_ready`，该样本属于传感器/地图预热失败，不得记作 PCA 或 corridor 几何失败。
-- `ego_corridors_v24_drone_<id>.csv`：每个轨迹分段一行，并记录 `inflation_candidate_evaluation_count`、方向来源/速度对齐、trajectory-weighted squared width、显式面代价和最终 region quality。Run 表中的 `direct_spatial_variable_count`、`hard_spatial_variable_count`、`hard_spatial_variable_overhead_ratio` 和 `face_sample_pairs_per_evaluation` 用于核验“降低约束负担”的声明；若 ratio 大于 1，不得声称参数维数下降。EllipsoidDecomp 额外记录种子包含是否被评估、是否完整包含线段以及最大归一化半空间违反量。由于多面体是凸集，只要两个端点位于多面体内，整条线 seed 就位于多面体内。
+- `ego_corridors_v25_drone_<id>.csv`：每个轨迹分段一行，并记录 `inflation_candidate_evaluation_count`、方向来源/速度对齐、metric eigenvalues/condition、trajectory-weighted squared width、显式面代价和最终 region quality。Run 表中的 `direct_spatial_variable_count`、`hard_spatial_variable_count`、`hard_spatial_variable_overhead_ratio` 和 `face_sample_pairs_per_evaluation` 用于核验“降低约束负担”的声明；若 ratio 大于 1，不得声称参数维数下降。EllipsoidDecomp 额外记录种子包含是否被评估、是否完整包含线段以及最大归一化半空间违反量。由于多面体是凸集，只要两个端点位于多面体内，整条线 seed 就位于多面体内。
 - 最终安全失败继续拆分为 `obstacle_collision_failure`、`swarm_clearance_failure` 和走廊违反；硬连接点与采样曲线违反量保持独立。
 
 文件使用追加模式。不要在同一标签下混入不同地图或参数；每个场景应使用独立目录或唯一 `tf_sfc_experiment_tag`。
@@ -275,8 +275,8 @@ $HOME/tf_sfc_results/ego/ego_corridors_v24_drone_0.csv
 快速查看：
 
 ```bash
-head -n 5 $HOME/tf_sfc_results/ego/ego_runs_v24_drone_0.csv
-head -n 5 $HOME/tf_sfc_results/ego/ego_corridors_v24_drone_0.csv
+head -n 5 $HOME/tf_sfc_results/ego/ego_runs_v25_drone_0.csv
+head -n 5 $HOME/tf_sfc_results/ego/ego_corridors_v25_drone_0.csv
 ```
 
 ## 4. 当前可用于论文统计的字段
@@ -296,9 +296,9 @@ head -n 5 $HOME/tf_sfc_results/ego/ego_corridors_v24_drone_0.csv
 
 ```bash
 python3 tools/analyze_tf_sfc_v9.py \
-  $HOME/tf_sfc_results/ego/ego_runs_v24_drone_0.csv \
+  $HOME/tf_sfc_results/ego/ego_runs_v25_drone_0.csv \
   --corridors-csv \
-  $HOME/tf_sfc_results/ego/ego_corridors_v24_drone_0.csv
+  $HOME/tf_sfc_results/ego/ego_corridors_v25_drone_0.csv
 ```
 
 输出中的 `optimizer-call success` 仅为诊断项；论文主表应优先使用独立场景/目标上的系统结果、固定 seed 输入的走廊结果，以及有效走廊条件下的后端结果。工具给出的 “goals with >=1 successful plan” 也不是目标到达率。
@@ -753,3 +753,176 @@ fewer face-sample evaluations. Hard vertex-hull parameterization can use more
 spatial variables than direct junction coordinates; v24 logs both counts and
 must not be described as reducing decision-variable dimension unless the data
 actually show it.
+
+## EGO schema-v25: fixed-duration full-objective MINCO compliance
+
+The three v24 missions ended 0.115/0.224/0.038 m from the commanded goal and
+had zero greater-than-0.05 m reverse transitions after successful plans. They
+also reduced mean valid-corridor faces from 10.03 in v23 to 8.24 and successful
+face-sample pairs/evaluation from about 297 to 243. v24 is therefore frozen as
+the differential-state proxy baseline. Its direction Gramian is not renamed or
+silently replaced.
+
+v25 adds direction mode 3. Before corridor construction, after the certified
+seed has been aligned with the current MINCO piece budget, it evaluates the
+analytic waypoint gradient of the complete pre-corridor EGO spatial objective
+at central finite-difference perturbations. With fixed piece durations this
+objective contains MINCO smoothness, frozen local obstacle linearization,
+swarm, velocity/acceleration/jerk feasibility and path-variance terms. The
+symmetrized waypoint Hessian is projected to PSD with an explicit eigenvalue
+floor and inverted. The same perturbations provide the Jacobian of each actual
+MINCO piece's quadrature-mean position with respect to every waypoint. For
+piece i, `C_i = J_i H^{-1} J_i^T` is its 3x3 workspace compliance; large
+compliance eigenvalues are the easy-deformation directions.
+
+This is a local, fixed-duration sensitivity at the pre-corridor initial
+trajectory. It is not a global nonlinear Hessian certificate. Negative and
+near-zero curvature is logged and regularized rather than hidden.
+
+First v25 regression:
+
+```bash
+roslaunch ego_planner single_drone_interactive.launch \
+  map_seed:=42 \
+  tf_sfc_enabled:=true \
+  tf_sfc_corridor_method:=tf_sfc \
+  tf_sfc_direction_mode:=3 \
+  tf_sfc_allow_direction_fallback:=false \
+  tf_sfc_objective_compliance_fd_step:=0.02 \
+  tf_sfc_objective_compliance_eigenvalue_floor_ratio:=0.0001 \
+  tf_sfc_objective_compliance_absolute_floor:=0.000001 \
+  tf_sfc_max_faces:=12 \
+  tf_sfc_min_overlap_radius:=0.02 \
+  tf_sfc_face_quality_weight:=0.20 \
+  tf_sfc_progress_guard_enabled:=true \
+  tf_sfc_allow_partial_corridors:=true \
+  tf_sfc_allow_ego_fallback:=false \
+  tf_sfc_hard_corridor_parameterization:=true \
+  tf_sfc_trajectory_repair_enabled:=true \
+  tf_sfc_trajectory_repair_seed_fallback_enabled:=true \
+  tf_sfc_trajectory_repair_seed_geometric_acceptance_enabled:=false \
+  tf_sfc_post_optimization_repair_enabled:=false \
+  tf_sfc_experiment_tag:=full_objective_tf_sfc_v25
+```
+
+Required provenance gates:
+
+- every generated proposed corridor has `requested_direction_mode=3`,
+  `used_direction_mode=3` and
+  `direction_metric_source=minco_full_objective_compliance`;
+- run-level `objective_compliance_attempted=1` and
+  `objective_compliance_success=1`; failures remain explicit when fallback is
+  disabled;
+- evaluation count is normally `2 * 3 * (piece_count - 1) + 1` per metric
+  construction, plus the same amount if the bounded ordinary-A* seed retry
+  changes the initial MINCO trajectory;
+- report metric time, regularized eigenvalue count, raw eigenvalue range and
+  regularized condition number. Do not tune the eigenvalue floor separately
+  for individual failures.
+
+The paired v24/v25 direction ablation must retain the same seed, face weight,
+overlap threshold, progress guard, repair switches and denominator. Compare
+mission arrival, reverse transitions, corridor generation, strict rejection,
+faces, weighted width, compliance condition, face-sample workload and separate
+metric/inflation/optimizer/A* time.
+
+## EGO schema-v26: scale-free, transport-conditioned compliance
+
+The first files labelled v26 were rejected as paper evidence: their internal
+`schema_version` was 25, they had the 37-column v25 corridor header, and their
+direction source remained `minco_full_objective_compliance`. They were produced
+by a stale v25 binary with only the experiment tag changed. The analyzer now
+fails immediately when a `_vNN_` filename disagrees with the embedded schema,
+when run/corridor schemas differ, or when schema-v26 mode 3 lacks its required
+transport-conditioned provenance.
+
+v26 replaces PSD clipping of the non-convex objective Hessian with a floored
+absolute-curvature metric. Each projected workspace compliance is normalized
+before direction weighting, then receives a bounded speed-conditioned MINCO
+transport dyad. This preserves local objective-easy deformation directions
+without allowing a high-speed corridor to be driven mainly perpendicular to
+the current transport direction.
+
+Clean deployment is mandatory:
+
+```bash
+cd ~/ICRA2027/EGO-Planner-v2
+git checkout feat/tf-sfc-paper
+git pull --ff-only
+git rev-parse --short HEAD  # must include the v26 commit or a descendant
+
+source ~/ICRA2027/DecompROS/devel/setup.bash
+cd swarm-playground/main_ws
+catkin_make -DCMAKE_BUILD_TYPE=Release
+source devel/setup.bash
+```
+
+The default paper scene now uses one automatic global waypoint across the
+map: start `(-15.0, -9.0, 0.1)`, target `(15.0, 9.0, 1.0)`, and
+`flight_type=2`. All remain launch arguments and can be overridden for the
+fixed scenario matrix.
+
+```bash
+roslaunch ego_planner single_drone_interactive.launch \
+  map_seed:=42 \
+  tf_sfc_enabled:=true \
+  tf_sfc_corridor_method:=tf_sfc \
+  tf_sfc_direction_mode:=3 \
+  tf_sfc_allow_direction_fallback:=false \
+  tf_sfc_objective_compliance_transport_speed_reference:=1.0 \
+  tf_sfc_objective_compliance_transport_weight_max:=2.0 \
+  tf_sfc_max_faces:=12 \
+  tf_sfc_min_overlap_radius:=0.02 \
+  tf_sfc_allow_ego_fallback:=false \
+  tf_sfc_log_directory:=$HOME/tf_sfc_results/ego/v26_diagonal \
+  tf_sfc_experiment_tag:=transport_conditioned_tf_sfc_v26
+```
+
+Before accepting a run, verify that the run CSV contains schema 26 and that
+the corridor CSV has 38 columns including
+`direction_transport_conditioning_weight`. Every valid mode-3 corridor must
+report `minco_transport_conditioned_objective_compliance`.
+
+## EGO schema-v27: exact obstacle-cut subset selection
+
+Two clean v26 runs on the diagonal paper scene produced 54/94 successful
+calls, 90/94 valid corridor generations, no greater-than-0.05 m reverse
+transition, median direction condition 2.80 and median velocity alignment
+1.00. The direction claim therefore passed its first runtime gate. However,
+valid corridors still averaged 10.26 faces, 63/274 reached the 12-face cap,
+and successful face-sample workload remained 270 per evaluation.
+
+v27 addresses this measured bottleneck without changing MINCO compliance,
+the A* seed, overlap, obstacle padding, or the 12-face hard cap. After the
+bounded greedy construction creates at most six padded obstacle cuts, v27
+enumerates every subset (at most 64). It retains the minimum-cardinality subset
+that still excludes every scanned voxel; equal-cardinality subsets are resolved
+by their minimum exclusion margin. The six OBB faces remain, so every tested
+subset is bounded. Candidate inflation still uses trajectory-weighted width
+minus the explicit face penalty.
+
+Run the main v27 condition with:
+
+```bash
+roslaunch ego_planner single_drone_interactive.launch \
+  map_seed:=42 \
+  tf_sfc_enabled:=true \
+  tf_sfc_corridor_method:=tf_sfc \
+  tf_sfc_direction_mode:=3 \
+  tf_sfc_allow_direction_fallback:=false \
+  tf_sfc_exact_face_subset_pruning_enabled:=true \
+  tf_sfc_objective_compliance_transport_speed_reference:=1.0 \
+  tf_sfc_objective_compliance_transport_weight_max:=2.0 \
+  tf_sfc_max_faces:=12 \
+  tf_sfc_min_overlap_radius:=0.02 \
+  tf_sfc_allow_ego_fallback:=false \
+  tf_sfc_log_directory:=$HOME/tf_sfc_results/ego/v27_diagonal \
+  tf_sfc_experiment_tag:=exact_face_subset_tf_sfc_v27
+```
+
+Schema v27 adds `obstacle_face_count_before_pruning`,
+`obstacle_face_prune_count`, and `face_subset_evaluation_count`. The paired
+ablation changes only
+`tf_sfc_exact_face_subset_pruning_enabled:=false` and its experiment tag.
+The main method must retain overlap >=0.02 m and max faces <=12 while reducing
+mean faces, face-sample pairs and corridor inflation time relative to v26.

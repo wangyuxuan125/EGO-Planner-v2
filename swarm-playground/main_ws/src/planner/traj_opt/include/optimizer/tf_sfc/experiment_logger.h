@@ -79,6 +79,16 @@ struct ExperimentRunRecord
   int direction_mode = 1;
   int used_direction_mode = -1;
   bool direction_fallback_allowed = true;
+  bool objective_compliance_attempted = false;
+  bool objective_compliance_success = false;
+  int objective_compliance_spatial_variable_count = 0;
+  int objective_compliance_evaluation_count = 0;
+  int objective_compliance_regularized_eigenvalue_count = 0;
+  double objective_compliance_ms = 0.0;
+  double objective_compliance_raw_min_eigenvalue = 0.0;
+  double objective_compliance_raw_max_eigenvalue = 0.0;
+  double objective_compliance_regularized_condition_number = 0.0;
+  std::string objective_compliance_reason = "not_requested";
   bool success = false;
   bool collision_free = false;
   bool final_obstacle_collision = false;

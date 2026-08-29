@@ -39,7 +39,8 @@ enum class DirectionMode
 {
   FRENET = 0,
   PCA = 1,
-  SENSITIVITY = 2
+  SENSITIVITY = 2,
+  FULL_OBJECTIVE_COMPLIANCE = 3
 };
 
 enum class FailureReason
@@ -180,10 +181,21 @@ struct Parameters
   // cost for every retained half-space face. This makes the FIRI face-count
   // trade-off explicit while max_faces remains a hard upper bound.
   double face_quality_weight = 0.20;
+  bool exact_face_subset_pruning_enabled = true;
   double progress_guard_horizon_s = 1.0;
   double max_initial_progress_regression = 0.05;
   double max_target_axis_progress_drop = 0.25;
   double max_target_overshoot = 0.15;
+  // Mode 3 estimates the fixed-duration spatial Hessian of the complete
+  // pre-corridor EGO/MINCO objective by central differences of its analytic
+  // waypoint gradient. Its absolute-curvature inverse is projected to one
+  // scale-free 3x3 workspace compliance matrix per piece, then conditioned
+  // by the actual MINCO transport velocity at high speed.
+  double objective_compliance_fd_step = 0.02;
+  double objective_compliance_eigenvalue_floor_ratio = 1.0e-4;
+  double objective_compliance_absolute_floor = 1.0e-6;
+  double objective_compliance_transport_speed_reference = 1.0;
+  double objective_compliance_transport_weight_max = 2.0;
   // Retained for launch-file compatibility with v22. v23 restores strict
   // re-encoding and never projects a post-optimization junction by this amount.
   double post_optimization_repair_max_seed_junction_shift = 1.0e-5;
@@ -194,7 +206,9 @@ struct DirectionSet
   Eigen::Matrix3d frame = Eigen::Matrix3d::Identity();
   Eigen::Vector3d utility = Eigen::Vector3d::Ones();
   std::string metric_source = "not_evaluated";
+  Eigen::Vector3d metric_eigenvalues = Eigen::Vector3d::Ones();
   double velocity_alignment_cosine = 0.0;
+  double transport_conditioning_weight = 0.0;
   DirectionMode requested_mode = DirectionMode::PCA;
   DirectionMode used_mode = DirectionMode::PCA;
   bool used_fallback = false;
@@ -207,6 +221,9 @@ struct CorridorMetrics
   int piece_id = -1;
   int face_count = 0;
   int obstacle_face_count = 0;
+  int obstacle_face_count_before_pruning = 0;
+  int obstacle_face_prune_count = 0;
+  int face_subset_evaluation_count = 0;
   int obstacle_point_count = 0;
   int inflation_candidate_evaluation_count = 0;
   bool face_budget_saturated = false;
@@ -215,7 +232,12 @@ struct CorridorMetrics
   double region_quality_score = 0.0;
   double face_quality_penalty = 0.0;
   std::string direction_metric_source = "not_evaluated";
+  double direction_metric_eigenvalue_max = 0.0;
+  double direction_metric_eigenvalue_mid = 0.0;
+  double direction_metric_eigenvalue_min = 0.0;
+  double direction_metric_condition_number = 0.0;
   double direction_velocity_alignment_cosine = 0.0;
+  double direction_transport_conditioning_weight = 0.0;
   double min_sample_slack = -std::numeric_limits<double>::infinity();
   double anchor_clearance_radius = -std::numeric_limits<double>::infinity();
   double min_obstacle_sample_distance_m =
