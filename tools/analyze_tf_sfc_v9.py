@@ -173,6 +173,12 @@ def summarize_corridors(tag, rows):
     transport_weights = finite_column(
         valid_rows, "direction_transport_conditioning_weight"
     ) if "direction_transport_conditioning_weight" in valid_rows[0] else []
+    pruned_faces = finite_column(
+        valid_rows, "obstacle_face_prune_count"
+    ) if "obstacle_face_prune_count" in valid_rows[0] else []
+    subset_evaluations = finite_column(
+        valid_rows, "face_subset_evaluation_count"
+    ) if "face_subset_evaluation_count" in valid_rows[0] else []
     sources = Counter(row.get("direction_metric_source", "unknown")
                       for row in valid_rows)
     print(
@@ -196,6 +202,16 @@ def summarize_corridors(tag, rows):
         f"inflation candidate evaluations p90="
         f"{percentile(candidate_evaluations, 0.9):.0f}"
     )
+    if pruned_faces:
+        print(
+            f"exact face-subset pruning [{tag}]: corridors with removals="
+            f"{sum(value > 0 for value in pruned_faces)}/{len(pruned_faces)}; "
+            f"removed total/median/p90={sum(pruned_faces):.0f}/"
+            f"{percentile(pruned_faces, 0.5):.0f}/"
+            f"{percentile(pruned_faces, 0.9):.0f}; "
+            f"subset evaluations p90="
+            f"{percentile(subset_evaluations, 0.9):.0f}"
+        )
 
 
 def summarize(tag, rows, progress_regression_threshold):
@@ -430,6 +446,18 @@ def main():
                 raise SystemExit(
                     f"schema v{corridor_schema}: {len(invalid_mode3)} valid "
                     "mode-3 corridors lack transport-conditioned provenance"
+                )
+        if corridor_schema >= 27:
+            required_pruning = {
+                "obstacle_face_count_before_pruning",
+                "obstacle_face_prune_count",
+                "face_subset_evaluation_count",
+            }
+            missing_pruning = required_pruning.difference(corridor_rows[0])
+            if missing_pruning:
+                raise SystemExit(
+                    f"schema v{corridor_schema} corridor CSV lacks "
+                    f"{sorted(missing_pruning)}"
                 )
         corridor_groups = defaultdict(list)
         for row in corridor_rows:

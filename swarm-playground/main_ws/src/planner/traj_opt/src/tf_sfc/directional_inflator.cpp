@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdint>
 #include <limits>
 #include <numeric>
 #include <vector>
@@ -178,6 +179,9 @@ bool DirectionalInflator::inflate(const PointVector &samples,
 
   HPoly accepted_hpoly;
   int accepted_obstacle_faces = 0;
+  int accepted_obstacle_faces_before_pruning = 0;
+  int accepted_obstacle_face_prune_count = 0;
+  int accepted_face_subset_evaluation_count = 0;
   int accepted_obstacle_points = 0;
   bool accepted_budget_saturated = false;
   double accepted_min_obstacle_sample_distance_m =
@@ -189,6 +193,9 @@ bool DirectionalInflator::inflate(const PointVector &samples,
   const SpaceState initial_state = buildFaceBoundedCandidate(
       samples, anchor, directions.frame, lower, upper, map_resolution,
       is_occupied, accepted_hpoly, accepted_obstacle_faces,
+      accepted_obstacle_faces_before_pruning,
+      accepted_obstacle_face_prune_count,
+      accepted_face_subset_evaluation_count,
       accepted_obstacle_points, accepted_budget_saturated,
       accepted_min_obstacle_sample_distance_m,
       accepted_separation_failure_sample_id,
@@ -196,6 +203,12 @@ bool DirectionalInflator::inflate(const PointVector &samples,
   if (initial_state != SpaceState::FREE)
   {
     corridor.metrics.obstacle_face_count = accepted_obstacle_faces;
+    corridor.metrics.obstacle_face_count_before_pruning =
+        accepted_obstacle_faces_before_pruning;
+    corridor.metrics.obstacle_face_prune_count =
+        accepted_obstacle_face_prune_count;
+    corridor.metrics.face_subset_evaluation_count =
+        accepted_face_subset_evaluation_count;
     corridor.metrics.obstacle_point_count = accepted_obstacle_points;
     corridor.metrics.inflation_candidate_evaluation_count =
         candidate_evaluation_count;
@@ -249,6 +262,12 @@ bool DirectionalInflator::inflate(const PointVector &samples,
       Eigen::Vector3d best_upper = upper;
       HPoly best_hpoly = accepted_hpoly;
       int best_obstacle_faces = accepted_obstacle_faces;
+      int best_obstacle_faces_before_pruning =
+          accepted_obstacle_faces_before_pruning;
+      int best_obstacle_face_prune_count =
+          accepted_obstacle_face_prune_count;
+      int best_face_subset_evaluation_count =
+          accepted_face_subset_evaluation_count;
       int best_obstacle_points = accepted_obstacle_points;
       bool best_budget_saturated = accepted_budget_saturated;
       double best_min_obstacle_sample_distance_m =
@@ -284,6 +303,9 @@ bool DirectionalInflator::inflate(const PointVector &samples,
 
         HPoly candidate_hpoly;
         int candidate_obstacle_faces = 0;
+        int candidate_obstacle_faces_before_pruning = 0;
+        int candidate_obstacle_face_prune_count = 0;
+        int candidate_face_subset_evaluation_count = 0;
         int candidate_obstacle_points = 0;
         bool candidate_budget_saturated = false;
         double candidate_min_obstacle_sample_distance_m =
@@ -295,7 +317,11 @@ bool DirectionalInflator::inflate(const PointVector &samples,
         const SpaceState candidate_state = buildFaceBoundedCandidate(
             samples, anchor, directions.frame, candidate_lower,
             candidate_upper, map_resolution, is_occupied, candidate_hpoly,
-            candidate_obstacle_faces, candidate_obstacle_points,
+            candidate_obstacle_faces,
+            candidate_obstacle_faces_before_pruning,
+            candidate_obstacle_face_prune_count,
+            candidate_face_subset_evaluation_count,
+            candidate_obstacle_points,
             candidate_budget_saturated,
             candidate_min_obstacle_sample_distance_m,
             candidate_separation_failure_sample_id,
@@ -322,6 +348,12 @@ bool DirectionalInflator::inflate(const PointVector &samples,
           best_upper = candidate_upper;
           best_hpoly = candidate_hpoly;
           best_obstacle_faces = candidate_obstacle_faces;
+          best_obstacle_faces_before_pruning =
+              candidate_obstacle_faces_before_pruning;
+          best_obstacle_face_prune_count =
+              candidate_obstacle_face_prune_count;
+          best_face_subset_evaluation_count =
+              candidate_face_subset_evaluation_count;
           best_obstacle_points = candidate_obstacle_points;
           best_budget_saturated = candidate_budget_saturated;
           best_min_obstacle_sample_distance_m =
@@ -377,6 +409,12 @@ bool DirectionalInflator::inflate(const PointVector &samples,
         upper = best_upper;
         accepted_hpoly = best_hpoly;
         accepted_obstacle_faces = best_obstacle_faces;
+        accepted_obstacle_faces_before_pruning =
+            best_obstacle_faces_before_pruning;
+        accepted_obstacle_face_prune_count =
+            best_obstacle_face_prune_count;
+        accepted_face_subset_evaluation_count =
+            best_face_subset_evaluation_count;
         accepted_obstacle_points = best_obstacle_points;
         accepted_budget_saturated = best_budget_saturated;
         accepted_min_obstacle_sample_distance_m =
@@ -395,6 +433,12 @@ bool DirectionalInflator::inflate(const PointVector &samples,
   corridor.hpoly = accepted_hpoly;
   corridor.metrics.face_count = corridor.hpoly.rows();
   corridor.metrics.obstacle_face_count = accepted_obstacle_faces;
+  corridor.metrics.obstacle_face_count_before_pruning =
+      accepted_obstacle_faces_before_pruning;
+  corridor.metrics.obstacle_face_prune_count =
+      accepted_obstacle_face_prune_count;
+  corridor.metrics.face_subset_evaluation_count =
+      accepted_face_subset_evaluation_count;
   corridor.metrics.obstacle_point_count = accepted_obstacle_points;
   corridor.metrics.inflation_candidate_evaluation_count =
       candidate_evaluation_count;
@@ -579,6 +623,9 @@ DirectionalInflator::buildFaceBoundedCandidate(
     const OccupancyQuery &is_occupied,
     HPoly &hpoly,
     int &obstacle_face_count,
+    int &obstacle_face_count_before_pruning,
+    int &obstacle_face_prune_count,
+    int &face_subset_evaluation_count,
     int &obstacle_point_count,
     bool &face_budget_saturated,
     double &min_obstacle_sample_distance_m,
@@ -588,6 +635,9 @@ DirectionalInflator::buildFaceBoundedCandidate(
 {
   hpoly = boundsToHPoly(anchor, frame, lower, upper);
   obstacle_face_count = 0;
+  obstacle_face_count_before_pruning = 0;
+  obstacle_face_prune_count = 0;
+  face_subset_evaluation_count = 0;
   obstacle_point_count = 0;
   face_budget_saturated = false;
   min_obstacle_sample_distance_m =
@@ -663,8 +713,10 @@ DirectionalInflator::buildFaceBoundedCandidate(
     bool already_excluded = false;
     for (size_t face_id = 0; face_id < cut_normals.size(); ++face_id)
     {
-      if (cut_normals[face_id].dot(obstacle) >
-          cut_offsets[face_id] + kTolerance)
+      const double voxel_padding =
+          0.5 * map_resolution * cut_normals[face_id].cwiseAbs().sum();
+      if (cut_normals[face_id].dot(obstacle) - voxel_padding >=
+          cut_offsets[face_id] - kTolerance)
       {
         already_excluded = true;
         break;
@@ -901,6 +953,137 @@ DirectionalInflator::buildFaceBoundedCandidate(
     }
   }
 
+  obstacle_face_count_before_pruning =
+      static_cast<int>(cut_normals.size());
+
+  // With at most six obstacle cuts, exhaustively solve the small set-cover
+  // problem instead of retaining the order-dependent greedy prefix. The six
+  // OBB faces remain, so every subset is bounded. A voxel is covered when at
+  // least one selected padded cut excludes its centre; this is the same
+  // conservative separation certificate used to construct the cut.
+  if (parameters_.exact_face_subset_pruning_enabled &&
+      cut_normals.size() > 1 && cut_normals.size() <= 63)
+  {
+    const std::uint64_t full_mask =
+        (std::uint64_t{1} << cut_normals.size()) - std::uint64_t{1};
+    struct ObstacleCoverage
+    {
+      std::uint64_t mask = 0;
+      std::vector<double> margins;
+    };
+    std::vector<ObstacleCoverage> required_coverages;
+    required_coverages.reserve(obstacles.size());
+    for (const Eigen::Vector3d &obstacle : obstacles)
+    {
+      bool base_excludes_voxel = false;
+      for (int base_face_id = 0; base_face_id < 6; ++base_face_id)
+      {
+        const Eigen::Vector3d base_normal =
+            hpoly.row(base_face_id).head<3>().transpose();
+        const double voxel_padding =
+            0.5 * map_resolution * base_normal.cwiseAbs().sum();
+        if (base_normal.dot(obstacle) - voxel_padding >=
+            hpoly(base_face_id, 3) - kTolerance)
+        {
+          base_excludes_voxel = true;
+          break;
+        }
+      }
+      if (base_excludes_voxel)
+      {
+        continue;
+      }
+      ObstacleCoverage coverage;
+      coverage.margins.resize(cut_normals.size());
+      for (size_t face_id = 0; face_id < cut_normals.size(); ++face_id)
+      {
+        const double voxel_padding =
+            0.5 * map_resolution * cut_normals[face_id].cwiseAbs().sum();
+        coverage.margins[face_id] =
+            cut_normals[face_id].dot(obstacle) - voxel_padding -
+            cut_offsets[face_id];
+        if (coverage.margins[face_id] >= -kTolerance)
+        {
+          coverage.mask |= std::uint64_t{1} << face_id;
+        }
+      }
+      required_coverages.push_back(coverage);
+    }
+
+    std::uint64_t best_mask = full_mask;
+    int best_count = static_cast<int>(cut_normals.size());
+    double best_min_exclusion_margin =
+        -std::numeric_limits<double>::infinity();
+    for (std::uint64_t mask = 0; mask <= full_mask; ++mask)
+    {
+      ++face_subset_evaluation_count;
+      const int selected_count = __builtin_popcountll(mask);
+      if (selected_count > best_count)
+      {
+        continue;
+      }
+      bool covers_all_obstacles = true;
+      double min_exclusion_margin =
+          std::numeric_limits<double>::infinity();
+      for (const ObstacleCoverage &coverage : required_coverages)
+      {
+        if ((coverage.mask & mask) == 0)
+        {
+          covers_all_obstacles = false;
+          break;
+        }
+        double obstacle_margin =
+            -std::numeric_limits<double>::infinity();
+        for (size_t face_id = 0; face_id < cut_normals.size(); ++face_id)
+        {
+          if ((mask & (std::uint64_t{1} << face_id)) == 0)
+          {
+            continue;
+          }
+          obstacle_margin = std::max(
+              obstacle_margin, coverage.margins[face_id]);
+        }
+        min_exclusion_margin =
+            std::min(min_exclusion_margin, obstacle_margin);
+      }
+      if (!covers_all_obstacles)
+      {
+        continue;
+      }
+      const bool fewer_faces = selected_count < best_count;
+      const bool equal_faces_larger_margin =
+          selected_count == best_count &&
+          min_exclusion_margin > best_min_exclusion_margin + kTolerance;
+      if (fewer_faces || equal_faces_larger_margin)
+      {
+        best_mask = mask;
+        best_count = selected_count;
+        best_min_exclusion_margin = min_exclusion_margin;
+      }
+    }
+
+    if (best_mask != full_mask)
+    {
+      PointVector selected_normals;
+      std::vector<double> selected_offsets;
+      selected_normals.reserve(best_count);
+      selected_offsets.reserve(best_count);
+      for (size_t face_id = 0; face_id < cut_normals.size(); ++face_id)
+      {
+        if ((best_mask & (std::uint64_t{1} << face_id)) != 0)
+        {
+          selected_normals.push_back(cut_normals[face_id]);
+          selected_offsets.push_back(cut_offsets[face_id]);
+        }
+      }
+      cut_normals.swap(selected_normals);
+      cut_offsets.swap(selected_offsets);
+    }
+  }
+  obstacle_face_prune_count =
+      obstacle_face_count_before_pruning -
+      static_cast<int>(cut_normals.size());
+
   hpoly.conservativeResize(6 + static_cast<int>(cut_normals.size()), 4);
   for (size_t face_id = 0; face_id < cut_normals.size(); ++face_id)
   {
@@ -919,10 +1102,24 @@ DirectionalInflator::buildFaceBoundedCandidate(
   }
   for (const Eigen::Vector3d &obstacle : obstacles)
   {
-    if (contains(hpoly, obstacle, kTolerance))
+    bool voxel_excluded = false;
+    for (int face_id = 0; face_id < hpoly.rows(); ++face_id)
+    {
+      const Eigen::Vector3d normal =
+          hpoly.row(face_id).head<3>().transpose();
+      const double voxel_padding =
+          0.5 * map_resolution * normal.cwiseAbs().sum();
+      if (normal.dot(obstacle) - voxel_padding >=
+          hpoly(face_id, 3) - kTolerance)
+      {
+        voxel_excluded = true;
+        break;
+      }
+    }
+    if (!voxel_excluded)
     {
       face_budget_saturated =
-          static_cast<int>(cut_normals.size()) >= face_capacity;
+          obstacle_face_count_before_pruning >= face_capacity;
       failure_reason = face_budget_saturated
                            ? FailureReason::FACE_BUDGET_EXHAUSTED
                            : FailureReason::OBSTACLE_SEPARATION_FAILURE;
@@ -931,7 +1128,8 @@ DirectionalInflator::buildFaceBoundedCandidate(
   }
 
   obstacle_face_count = static_cast<int>(cut_normals.size());
-  face_budget_saturated = obstacle_face_count >= face_capacity;
+  face_budget_saturated =
+      obstacle_face_count_before_pruning >= face_capacity;
   return SpaceState::FREE;
 }
 

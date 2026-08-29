@@ -36,12 +36,21 @@ The paper claim, development milestones, fairness rules and freeze gates are def
   weighting, and adds a speed-conditioned MINCO transport dyad. This directly
   retains objective-easy directions at low speed while preventing a high-speed
   corridor from being driven primarily perpendicular to its transport.
+- Two clean v26 diagonal-scene runs validated that correction: all valid
+  mode-3 corridors used transport-conditioned compliance, median direction
+  condition rose to 2.80, median velocity alignment reached 1.00, optimizer
+  success was 54/94, and no greater-than-0.05 m regression occurred. The
+  remaining bottleneck was 10.26 mean faces and 270 median successful
+  face-sample pairs. Schema v27 therefore exactly enumerates the at-most-64
+  subsets of the at-most-six padded obstacle cuts and retains the minimum-cardinality
+  subset that still separates every scanned voxel. Width/face candidate quality,
+  overlap and all safety gates remain unchanged.
 
 ## Required before freezing paper results
 
 1. Run clean Release builds with the exact ROS Noetic, Eigen, DecompUtil and DecompROS revisions recorded in a lock/setup document.
 2. Execute regression tests for at least 30 fixed seeds before large experiments. Confirm that every active hard junction has near-zero `max_junction_violation_final_m`, compare v18 success/latency with the shared clearance-aware A* enabled versus the v17 occupancy-A* front end, and retain the v7 hard-junction and v6 soft-only ablations, and verify no increase in final obstacle or swarm-clearance failures.
-3. Freeze the final CSV schema (v26 is the current diagnostic schema) and its compatible aggregation script after clean runtime validation. The tool separates candidate calls, planning events, goals, search, metric construction, corridor generation and conditional optimization. Add an FSM-level goal-arrival/timeout/collision record before calling any aggregate a mission-success rate: schema v26 identifies a goal, retry chain, seed/MINCO alignment, direction provenance, local-curvature regularization, transport-conditioning weight, progress rejection and repair provenance but still does not prove execution reached it.
+3. Freeze the final CSV schema (v27 is the current diagnostic schema) and its compatible aggregation script after clean runtime validation. The tool separates candidate calls, planning events, goals, search, metric construction, face-subset pruning, corridor generation and conditional optimization. Add an FSM-level goal-arrival/timeout/collision record before calling any aggregate a mission-success rate: schema v27 identifies a goal, retry chain, seed/MINCO alignment, direction provenance, local-curvature regularization, transport-conditioning weight, face pruning, progress rejection and repair provenance but still does not prove execution reached it.
 4. Add continuous or sufficiently conservative trajectory-versus-corridor verification. The current `max_corridor_violation_*` values are quadrature-sampled diagnostics, not a mathematical continuous-time certificate.
 5. Define identical maps, start/goal pairs, dynamics, obstacle inflation, time limits, warm-up policy and failure denominators for all EGO and GCOPTER baselines.
 6. Run the full method matrix and ablations: original EGO, OBB without/with overlap handling, EllipsoidDecomp with extension 0/0.20 m, and GCOPTER FIRI/EllipsoidDecomp/TF-SFC.
@@ -49,7 +58,7 @@ The paper claim, development milestones, fairness rules and freeze gates are def
 
 ## Required if the paper claims the full TF-SFC method
 
-- Runtime-validate v26 mode 3 against v24 mode 2, v25 raw-compliance history, and finite-difference-step/eigenvalue-floor/transport-weight sensitivity tests. Formal mode-3 runs must set `tf_sfc_allow_direction_fallback:=false`; PCA fallback data is an ablation, never the main method. The correct claim is speed-conditioned local fixed-duration full-spatial-objective compliance, not a global nonlinear Hessian certificate.
+- Runtime-validate v27 mode 3 against v26 with exact face-subset pruning disabled in a dedicated ablation, plus v24 mode 2 and v25 raw-compliance history. Formal mode-3 runs must set `tf_sfc_allow_direction_fallback:=false`; PCA fallback data is an ablation, never the main method. The correct claim is speed-conditioned local fixed-duration full-spatial-objective compliance with bounded exact cut-subset selection, not a global nonlinear Hessian or maximum-volume certificate.
 - Validate the v24 bounded face-aware candidate selection, then implement any stronger claimed obstacle cutting-plane pruning or general overlap optimization with separate ablations. The present overlap is a hard feasibility gate, not a globally optimized objective.
 - Add corridor MVIE volume (or a justified Chebyshev-radius approximation). The current schema provides line-seed containment and local-map coverage, but these must not be presented as region-volume quality.
 - Validate multi-drone interactions if swarm performance is part of the paper claim; current evidence is mainly single-drone corridor integration.

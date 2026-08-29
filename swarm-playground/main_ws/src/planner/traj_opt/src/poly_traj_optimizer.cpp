@@ -5328,6 +5328,8 @@ namespace ego_planner
              tf_sfc_parameters_.trajectory_repair_min_improvement, 1.0e-4);
     nh.param("tf_sfc/face_quality_weight",
              tf_sfc_parameters_.face_quality_weight, 0.20);
+    nh.param("tf_sfc/exact_face_subset_pruning_enabled",
+             tf_sfc_parameters_.exact_face_subset_pruning_enabled, true);
     nh.param("tf_sfc/progress_guard_horizon_s",
              tf_sfc_parameters_.progress_guard_horizon_s, 1.0);
     nh.param("tf_sfc/max_initial_progress_regression",

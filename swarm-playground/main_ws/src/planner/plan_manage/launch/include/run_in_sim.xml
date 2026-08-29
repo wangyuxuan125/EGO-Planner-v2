@@ -78,6 +78,7 @@
     <arg name="tf_sfc_trajectory_repair_trigger" default="0.001"/>
     <arg name="tf_sfc_trajectory_repair_min_improvement" default="0.0001"/>
     <arg name="tf_sfc_face_quality_weight" default="0.20"/>
+    <arg name="tf_sfc_exact_face_subset_pruning_enabled" default="true"/>
     <arg name="tf_sfc_progress_guard_enabled" default="true"/>
     <arg name="tf_sfc_progress_guard_horizon_s" default="1.0"/>
     <arg name="tf_sfc_max_initial_progress_regression" default="0.05"/>
@@ -167,6 +168,7 @@
         <arg name="tf_sfc_trajectory_repair_trigger" value="$(arg tf_sfc_trajectory_repair_trigger)"/>
         <arg name="tf_sfc_trajectory_repair_min_improvement" value="$(arg tf_sfc_trajectory_repair_min_improvement)"/>
         <arg name="tf_sfc_face_quality_weight" value="$(arg tf_sfc_face_quality_weight)"/>
+        <arg name="tf_sfc_exact_face_subset_pruning_enabled" value="$(arg tf_sfc_exact_face_subset_pruning_enabled)"/>
         <arg name="tf_sfc_progress_guard_enabled" value="$(arg tf_sfc_progress_guard_enabled)"/>
         <arg name="tf_sfc_progress_guard_horizon_s" value="$(arg tf_sfc_progress_guard_horizon_s)"/>
         <arg name="tf_sfc_max_initial_progress_regression" value="$(arg tf_sfc_max_initial_progress_regression)"/>

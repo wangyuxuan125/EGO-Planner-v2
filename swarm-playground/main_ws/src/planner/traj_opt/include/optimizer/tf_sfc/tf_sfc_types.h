@@ -181,6 +181,7 @@ struct Parameters
   // cost for every retained half-space face. This makes the FIRI face-count
   // trade-off explicit while max_faces remains a hard upper bound.
   double face_quality_weight = 0.20;
+  bool exact_face_subset_pruning_enabled = true;
   double progress_guard_horizon_s = 1.0;
   double max_initial_progress_regression = 0.05;
   double max_target_axis_progress_drop = 0.25;
@@ -220,6 +221,9 @@ struct CorridorMetrics
   int piece_id = -1;
   int face_count = 0;
   int obstacle_face_count = 0;
+  int obstacle_face_count_before_pruning = 0;
+  int obstacle_face_prune_count = 0;
+  int face_subset_evaluation_count = 0;
   int obstacle_point_count = 0;
   int inflation_candidate_evaluation_count = 0;
   bool face_budget_saturated = false;

@@ -882,3 +882,47 @@ Before accepting a run, verify that the run CSV contains schema 26 and that
 the corridor CSV has 38 columns including
 `direction_transport_conditioning_weight`. Every valid mode-3 corridor must
 report `minco_transport_conditioned_objective_compliance`.
+
+## EGO schema-v27: exact obstacle-cut subset selection
+
+Two clean v26 runs on the diagonal paper scene produced 54/94 successful
+calls, 90/94 valid corridor generations, no greater-than-0.05 m reverse
+transition, median direction condition 2.80 and median velocity alignment
+1.00. The direction claim therefore passed its first runtime gate. However,
+valid corridors still averaged 10.26 faces, 63/274 reached the 12-face cap,
+and successful face-sample workload remained 270 per evaluation.
+
+v27 addresses this measured bottleneck without changing MINCO compliance,
+the A* seed, overlap, obstacle padding, or the 12-face hard cap. After the
+bounded greedy construction creates at most six padded obstacle cuts, v27
+enumerates every subset (at most 64). It retains the minimum-cardinality subset
+that still excludes every scanned voxel; equal-cardinality subsets are resolved
+by their minimum exclusion margin. The six OBB faces remain, so every tested
+subset is bounded. Candidate inflation still uses trajectory-weighted width
+minus the explicit face penalty.
+
+Run the main v27 condition with:
+
+```bash
+roslaunch ego_planner single_drone_interactive.launch \
+  map_seed:=42 \
+  tf_sfc_enabled:=true \
+  tf_sfc_corridor_method:=tf_sfc \
+  tf_sfc_direction_mode:=3 \
+  tf_sfc_allow_direction_fallback:=false \
+  tf_sfc_exact_face_subset_pruning_enabled:=true \
+  tf_sfc_objective_compliance_transport_speed_reference:=1.0 \
+  tf_sfc_objective_compliance_transport_weight_max:=2.0 \
+  tf_sfc_max_faces:=12 \
+  tf_sfc_min_overlap_radius:=0.02 \
+  tf_sfc_allow_ego_fallback:=false \
+  tf_sfc_log_directory:=$HOME/tf_sfc_results/ego/v27_diagonal \
+  tf_sfc_experiment_tag:=exact_face_subset_tf_sfc_v27
+```
+
+Schema v27 adds `obstacle_face_count_before_pruning`,
+`obstacle_face_prune_count`, and `face_subset_evaluation_count`. The paired
+ablation changes only
+`tf_sfc_exact_face_subset_pruning_enabled:=false` and its experiment tag.
+The main method must retain overlap >=0.02 m and max faces <=12 while reducing
+mean faces, face-sample pairs and corridor inflation time relative to v26.

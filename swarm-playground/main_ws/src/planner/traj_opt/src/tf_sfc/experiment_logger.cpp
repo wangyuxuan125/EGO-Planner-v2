@@ -126,7 +126,9 @@ const char *kRunHeader =
 const char *kCorridorHeader =
     "schema_version,run_id,timestamp_s,experiment_tag,drone_id,piece_id,"
     "requested_method,method,"
-    "face_count,obstacle_face_count,obstacle_point_count,"
+    "face_count,obstacle_face_count,"
+    "obstacle_face_count_before_pruning,obstacle_face_prune_count,"
+    "face_subset_evaluation_count,obstacle_point_count,"
     "inflation_candidate_evaluation_count,face_budget_saturated,"
     "generation_time_ms,weighted_width,region_quality_score,"
     "face_quality_penalty,direction_metric_source,"
@@ -219,7 +221,7 @@ bool ExperimentLogger::ensureDirectory() const
 
 bool ExperimentLogger::appendRun(const ExperimentRunRecord &record) const
 {
-  const std::string path = directory_ + "/ego_runs_v26_drone_" +
+  const std::string path = directory_ + "/ego_runs_v27_drone_" +
                            std::to_string(record.drone_id) + ".csv";
   const bool header = fileNeedsHeader(path);
   std::ofstream output(path, std::ios::out | std::ios::app);
@@ -232,7 +234,7 @@ bool ExperimentLogger::appendRun(const ExperimentRunRecord &record) const
     output << kRunHeader << '\n';
   }
   output << std::setprecision(17)
-         << 26 << ',' << csv(record.run_id) << ','
+         << 27 << ',' << csv(record.run_id) << ','
          << csv(record.planning_event_id) << ',' << record.timestamp_s << ','
          << csv(record.experiment_tag) << ',' << record.drone_id << ','
          << record.goal_id << ',' << record.replan_id << ','
@@ -413,7 +415,7 @@ bool ExperimentLogger::appendCorridors(const ExperimentRunRecord &record,
   {
     return true;
   }
-  const std::string path = directory_ + "/ego_corridors_v26_drone_" +
+  const std::string path = directory_ + "/ego_corridors_v27_drone_" +
                            std::to_string(record.drone_id) + ".csv";
   const bool header = fileNeedsHeader(path);
   std::ofstream output(path, std::ios::out | std::ios::app);
@@ -429,11 +431,14 @@ bool ExperimentLogger::appendCorridors(const ExperimentRunRecord &record,
   for (const Corridor &corridor : corridors)
   {
     const CorridorMetrics &metrics = corridor.metrics;
-    output << 26 << ',' << csv(record.run_id) << ',' << record.timestamp_s << ','
+    output << 27 << ',' << csv(record.run_id) << ',' << record.timestamp_s << ','
            << csv(record.experiment_tag) << ',' << record.drone_id << ','
            << metrics.piece_id << ',' << csv(record.requested_method) << ','
            << csv(record.method) << ',' << metrics.face_count << ','
            << metrics.obstacle_face_count << ','
+           << metrics.obstacle_face_count_before_pruning << ','
+           << metrics.obstacle_face_prune_count << ','
+           << metrics.face_subset_evaluation_count << ','
            << metrics.obstacle_point_count << ','
            << metrics.inflation_candidate_evaluation_count << ','
            << metrics.face_budget_saturated << ','
