@@ -187,11 +187,14 @@ struct Parameters
   double max_target_overshoot = 0.15;
   // Mode 3 estimates the fixed-duration spatial Hessian of the complete
   // pre-corridor EGO/MINCO objective by central differences of its analytic
-  // waypoint gradient. The PSD-regularized inverse is projected to one 3x3
-  // workspace compliance matrix per piece.
+  // waypoint gradient. Its absolute-curvature inverse is projected to one
+  // scale-free 3x3 workspace compliance matrix per piece, then conditioned
+  // by the actual MINCO transport velocity at high speed.
   double objective_compliance_fd_step = 0.02;
   double objective_compliance_eigenvalue_floor_ratio = 1.0e-4;
   double objective_compliance_absolute_floor = 1.0e-6;
+  double objective_compliance_transport_speed_reference = 1.0;
+  double objective_compliance_transport_weight_max = 2.0;
   // Retained for launch-file compatibility with v22. v23 restores strict
   // re-encoding and never projects a post-optimization junction by this amount.
   double post_optimization_repair_max_seed_junction_shift = 1.0e-5;
@@ -204,6 +207,7 @@ struct DirectionSet
   std::string metric_source = "not_evaluated";
   Eigen::Vector3d metric_eigenvalues = Eigen::Vector3d::Ones();
   double velocity_alignment_cosine = 0.0;
+  double transport_conditioning_weight = 0.0;
   DirectionMode requested_mode = DirectionMode::PCA;
   DirectionMode used_mode = DirectionMode::PCA;
   bool used_fallback = false;
@@ -229,6 +233,7 @@ struct CorridorMetrics
   double direction_metric_eigenvalue_min = 0.0;
   double direction_metric_condition_number = 0.0;
   double direction_velocity_alignment_cosine = 0.0;
+  double direction_transport_conditioning_weight = 0.0;
   double min_sample_slack = -std::numeric_limits<double>::infinity();
   double anchor_clearance_radius = -std::numeric_limits<double>::infinity();
   double min_obstacle_sample_distance_m =

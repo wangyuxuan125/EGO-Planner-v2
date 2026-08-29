@@ -146,6 +146,9 @@ def summarize_corridors(tag, rows):
     metric_condition = finite_column(
         valid_rows, "direction_metric_condition_number"
     )
+    transport_weights = finite_column(
+        valid_rows, "direction_transport_conditioning_weight"
+    ) if "direction_transport_conditioning_weight" in valid_rows[0] else []
     sources = Counter(row.get("direction_metric_source", "unknown")
                       for row in valid_rows)
     print(
@@ -163,6 +166,9 @@ def summarize_corridors(tag, rows):
         f"direction evidence [{tag}]: sources={dict(sources)}; "
         f"velocity-alignment median={percentile(alignment, 0.5):.3f}; "
         f"metric-condition median={percentile(metric_condition, 0.5):.3f}; "
+        + (f"transport-weight median="
+           f"{percentile(transport_weights, 0.5):.3f}; "
+           if transport_weights else "") +
         f"inflation candidate evaluations p90="
         f"{percentile(candidate_evaluations, 0.9):.0f}"
     )

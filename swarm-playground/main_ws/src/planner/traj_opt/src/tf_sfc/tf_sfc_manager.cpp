@@ -46,6 +46,9 @@ double maxNormalizedHalfspaceViolation(const HPoly &hpoly,
 TfSfcManager::TfSfcManager(const GridMap::Ptr &grid_map, const Parameters &parameters)
     : grid_map_(grid_map), parameters_(parameters), inflator_(parameters)
 {
+  objective_compliance_provider_.setTransportConditioning(
+      parameters_.objective_compliance_transport_speed_reference,
+      parameters_.objective_compliance_transport_weight_max);
 }
 
 bool TfSfcManager::generate(const poly_traj::Trajectory &trajectory,

@@ -64,6 +64,8 @@
     <arg name="tf_sfc_objective_compliance_fd_step" default="0.02"/>
     <arg name="tf_sfc_objective_compliance_eigenvalue_floor_ratio" default="0.0001"/>
     <arg name="tf_sfc_objective_compliance_absolute_floor" default="0.000001"/>
+    <arg name="tf_sfc_objective_compliance_transport_speed_reference" default="1.0"/>
+    <arg name="tf_sfc_objective_compliance_transport_weight_max" default="2.0"/>
 
     <!-- map -->
     <node pkg ="map_generator" name ="random_forest" type ="random_forest" output = "screen">
@@ -157,5 +159,7 @@
         <arg name="tf_sfc_objective_compliance_fd_step" value="$(arg tf_sfc_objective_compliance_fd_step)"/>
         <arg name="tf_sfc_objective_compliance_eigenvalue_floor_ratio" value="$(arg tf_sfc_objective_compliance_eigenvalue_floor_ratio)"/>
         <arg name="tf_sfc_objective_compliance_absolute_floor" value="$(arg tf_sfc_objective_compliance_absolute_floor)"/>
+        <arg name="tf_sfc_objective_compliance_transport_speed_reference" value="$(arg tf_sfc_objective_compliance_transport_speed_reference)"/>
+        <arg name="tf_sfc_objective_compliance_transport_weight_max" value="$(arg tf_sfc_objective_compliance_transport_weight_max)"/>
     </include>
 </launch>

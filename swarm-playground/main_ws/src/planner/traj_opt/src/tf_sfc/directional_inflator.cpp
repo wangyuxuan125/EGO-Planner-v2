@@ -418,6 +418,8 @@ bool DirectionalInflator::inflate(const PointVector &samples,
       std::max(directions.metric_eigenvalues(2), 1.0e-12);
   corridor.metrics.direction_velocity_alignment_cosine =
       directions.velocity_alignment_cosine;
+  corridor.metrics.direction_transport_conditioning_weight =
+      directions.transport_conditioning_weight;
   corridor.metrics.valid = true;
 
   double min_slack = std::numeric_limits<double>::infinity();

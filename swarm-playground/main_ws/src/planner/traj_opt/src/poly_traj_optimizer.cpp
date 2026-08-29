@@ -4529,7 +4529,12 @@ namespace ego_planner
         tf_sfc_parameters_.objective_compliance_absolute_floor,
         tf_sfc_parameters_.objective_compliance_eigenvalue_floor_ratio *
             spectral_scale);
-    Eigen::VectorXd regularized_eigenvalues = raw_eigenvalues;
+    // The pre-corridor objective is non-convex. A large negative eigenvalue
+    // is high absolute curvature, not a nearly free deformation direction.
+    // Using |lambda| before flooring therefore yields a positive local
+    // absolute-curvature metric without promoting negative-curvature modes.
+    Eigen::VectorXd regularized_eigenvalues =
+        raw_eigenvalues.cwiseAbs();
     for (int eigenvalue_id = 0;
          eigenvalue_id < regularized_eigenvalues.size(); ++eigenvalue_id)
     {
@@ -5340,6 +5345,13 @@ namespace ego_planner
     nh.param("tf_sfc/objective_compliance_absolute_floor",
              tf_sfc_parameters_.objective_compliance_absolute_floor,
              1.0e-6);
+    nh.param("tf_sfc/objective_compliance_transport_speed_reference",
+             tf_sfc_parameters_
+                 .objective_compliance_transport_speed_reference,
+             1.0);
+    nh.param("tf_sfc/objective_compliance_transport_weight_max",
+             tf_sfc_parameters_.objective_compliance_transport_weight_max,
+             2.0);
     if (tf_sfc_parameters_.seed_clearance_astar_time_limit <= 0.0)
     {
       ROS_WARN("tf_sfc/seed_clearance_astar_time_limit must be positive; "
@@ -5438,6 +5450,15 @@ namespace ego_planner
     tf_sfc_parameters_.objective_compliance_absolute_floor =
         std::max(tf_sfc_parameters_.objective_compliance_absolute_floor,
                  1.0e-12);
+    tf_sfc_parameters_.objective_compliance_transport_speed_reference =
+        std::max(
+            tf_sfc_parameters_
+                .objective_compliance_transport_speed_reference,
+            1.0e-3);
+    tf_sfc_parameters_.objective_compliance_transport_weight_max =
+        std::max(
+            tf_sfc_parameters_.objective_compliance_transport_weight_max,
+            0.0);
     tf_sfc_parameters_.weight = std::max(tf_sfc_parameters_.weight, 0.0);
     tf_sfc_parameters_.enforcement_weight_multiplier =
         std::max(tf_sfc_parameters_.enforcement_weight_multiplier, 1.0);

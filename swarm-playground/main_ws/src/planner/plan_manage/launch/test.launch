@@ -165,6 +165,8 @@
         <param name="tf_sfc/objective_compliance_fd_step" value="0.02" type="double"/>
         <param name="tf_sfc/objective_compliance_eigenvalue_floor_ratio" value="0.0001" type="double"/>
         <param name="tf_sfc/objective_compliance_absolute_floor" value="0.000001" type="double"/>
+        <param name="tf_sfc/objective_compliance_transport_speed_reference" value="1.0" type="double"/>
+        <param name="tf_sfc/objective_compliance_transport_weight_max" value="2.0" type="double"/>
         <param name="tf_sfc/visualization_enabled" value="true" type="bool"/>
         <param name="tf_sfc/visualization_frame" value="world" type="string"/>
         <param name="tf_sfc/min_valid_pieces" value="1" type="int"/>
