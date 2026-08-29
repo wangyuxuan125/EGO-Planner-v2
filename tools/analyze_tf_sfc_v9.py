@@ -4,8 +4,32 @@
 import argparse
 import csv
 import math
+import os
+import re
 import statistics
 from collections import Counter, defaultdict
+
+
+def validate_schema_provenance(path, rows, table_name):
+    """Reject silently relabelled logs before producing paper statistics."""
+    versions = set()
+    for row in rows:
+        try:
+            versions.add(int(float(row.get("schema_version", "nan"))))
+        except (TypeError, ValueError):
+            raise SystemExit(f"{table_name}: invalid schema_version")
+    if len(versions) != 1:
+        raise SystemExit(
+            f"{table_name}: mixed schema versions {sorted(versions)}"
+        )
+    version = next(iter(versions))
+    match = re.search(r"_v(\d+)_", os.path.basename(path))
+    if match and int(match.group(1)) != version:
+        raise SystemExit(
+            f"{table_name}: filename claims v{match.group(1)} but CSV "
+            f"contains schema v{version}; rebuild/source the intended binary"
+        )
+    return version
 
 
 def as_bool(row, key):
@@ -367,6 +391,7 @@ def main():
         raise SystemExit("empty run CSV")
     if "planning_event_id" not in rows[0] or "retry_index" not in rows[0]:
         raise SystemExit("schema-v9+ CSV required")
+    run_schema = validate_schema_provenance(args.runs_csv, rows, "runs CSV")
     if args.max_progress_regression < 0.0:
         raise SystemExit("--max-progress-regression must be non-negative")
 
@@ -378,6 +403,34 @@ def main():
     if args.corridors_csv:
         with open(args.corridors_csv, newline="") as stream:
             corridor_rows = list(csv.DictReader(stream))
+        if not corridor_rows:
+            raise SystemExit("empty corridor CSV")
+        corridor_schema = validate_schema_provenance(
+            args.corridors_csv, corridor_rows, "corridors CSV"
+        )
+        if corridor_schema != run_schema:
+            raise SystemExit(
+                f"run/corridor schema mismatch: v{run_schema} versus "
+                f"v{corridor_schema}"
+            )
+        if corridor_schema >= 26:
+            required = "direction_transport_conditioning_weight"
+            if required not in corridor_rows[0]:
+                raise SystemExit(
+                    f"schema v{corridor_schema} corridor CSV lacks {required}"
+                )
+            invalid_mode3 = [
+                row for row in corridor_rows
+                if as_bool(row, "valid")
+                and int(float(row.get("used_direction_mode", "-1") or -1)) == 3
+                and row.get("direction_metric_source") !=
+                "minco_transport_conditioned_objective_compliance"
+            ]
+            if invalid_mode3:
+                raise SystemExit(
+                    f"schema v{corridor_schema}: {len(invalid_mode3)} valid "
+                    "mode-3 corridors lack transport-conditioned provenance"
+                )
         corridor_groups = defaultdict(list)
         for row in corridor_rows:
             corridor_groups[row.get("experiment_tag", "unknown")].append(row)

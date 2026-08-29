@@ -825,3 +825,60 @@ overlap threshold, progress guard, repair switches and denominator. Compare
 mission arrival, reverse transitions, corridor generation, strict rejection,
 faces, weighted width, compliance condition, face-sample workload and separate
 metric/inflation/optimizer/A* time.
+
+## EGO schema-v26: scale-free, transport-conditioned compliance
+
+The first files labelled v26 were rejected as paper evidence: their internal
+`schema_version` was 25, they had the 37-column v25 corridor header, and their
+direction source remained `minco_full_objective_compliance`. They were produced
+by a stale v25 binary with only the experiment tag changed. The analyzer now
+fails immediately when a `_vNN_` filename disagrees with the embedded schema,
+when run/corridor schemas differ, or when schema-v26 mode 3 lacks its required
+transport-conditioned provenance.
+
+v26 replaces PSD clipping of the non-convex objective Hessian with a floored
+absolute-curvature metric. Each projected workspace compliance is normalized
+before direction weighting, then receives a bounded speed-conditioned MINCO
+transport dyad. This preserves local objective-easy deformation directions
+without allowing a high-speed corridor to be driven mainly perpendicular to
+the current transport direction.
+
+Clean deployment is mandatory:
+
+```bash
+cd ~/ICRA2027/EGO-Planner-v2
+git checkout feat/tf-sfc-paper
+git pull --ff-only
+git rev-parse --short HEAD  # must include the v26 commit or a descendant
+
+source ~/ICRA2027/DecompROS/devel/setup.bash
+cd swarm-playground/main_ws
+catkin_make -DCMAKE_BUILD_TYPE=Release
+source devel/setup.bash
+```
+
+The default paper scene now uses one automatic global waypoint across the
+map: start `(-15.0, -9.0, 0.1)`, target `(15.0, 9.0, 1.0)`, and
+`flight_type=2`. All remain launch arguments and can be overridden for the
+fixed scenario matrix.
+
+```bash
+roslaunch ego_planner single_drone_interactive.launch \
+  map_seed:=42 \
+  tf_sfc_enabled:=true \
+  tf_sfc_corridor_method:=tf_sfc \
+  tf_sfc_direction_mode:=3 \
+  tf_sfc_allow_direction_fallback:=false \
+  tf_sfc_objective_compliance_transport_speed_reference:=1.0 \
+  tf_sfc_objective_compliance_transport_weight_max:=2.0 \
+  tf_sfc_max_faces:=12 \
+  tf_sfc_min_overlap_radius:=0.02 \
+  tf_sfc_allow_ego_fallback:=false \
+  tf_sfc_log_directory:=$HOME/tf_sfc_results/ego/v26_diagonal \
+  tf_sfc_experiment_tag:=transport_conditioned_tf_sfc_v26
+```
+
+Before accepting a run, verify that the run CSV contains schema 26 and that
+the corridor CSV has 38 columns including
+`direction_transport_conditioning_weight`. Every valid mode-3 corridor must
+report `minco_transport_conditioned_objective_compliance`.

@@ -4,6 +4,13 @@
     <arg name="map_size_z" value=" 3.0"/>
     <arg name="odom_topic" value="visual_slam/odom" />
     <arg name="map_seed" default="1"/>
+    <arg name="init_x" default="-15.0"/>
+    <arg name="init_y" default="-9.0"/>
+    <arg name="init_z" default="0.1"/>
+    <arg name="target0_x" default="15.0"/>
+    <arg name="target0_y" default="9.0"/>
+    <arg name="target0_z" default="1.0"/>
+    <arg name="flight_type" default="2"/>
     <arg name="tf_sfc_enabled" default="false"/>
     <arg name="tf_sfc_corridor_method" default="obb"/>
     <arg name="tf_sfc_max_faces" default="12"/>
@@ -91,14 +98,17 @@
 
     <include file="$(find ego_planner)/launch/include/run_in_sim.xml">
         <arg name="drone_id" value="0"/>
-        <arg name="init_x" value="-15.0"/>
-        <arg name="init_y" value="0.0"/>
-        <arg name="init_z" value="1.0"/>
+        <arg name="init_x" value="$(arg init_x)"/>
+        <arg name="init_y" value="$(arg init_y)"/>
+        <arg name="init_z" value="$(arg init_z)"/>
         <arg name="map_size_x" value="$(arg map_size_x)"/>
         <arg name="map_size_y" value="$(arg map_size_y)"/>
         <arg name="map_size_z" value="$(arg map_size_z)"/>
         <arg name="odom_topic" value="$(arg odom_topic)"/>
-        <arg name="flight_type" value="1"/>
+        <arg name="flight_type" value="$(arg flight_type)"/>
+        <arg name="target0_x" value="$(arg target0_x)"/>
+        <arg name="target0_y" value="$(arg target0_y)"/>
+        <arg name="target0_z" value="$(arg target0_z)"/>
         <arg name="tf_sfc_enabled" value="$(arg tf_sfc_enabled)"/>
         <arg name="tf_sfc_corridor_method" value="$(arg tf_sfc_corridor_method)"/>
         <arg name="tf_sfc_max_faces" value="$(arg tf_sfc_max_faces)"/>
